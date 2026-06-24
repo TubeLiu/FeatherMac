@@ -1,0 +1,7 @@
+*.swift text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+*.strings text working-tree-encoding=UTF-8
+*.png binary
+*.icns binary
+*.deb binary

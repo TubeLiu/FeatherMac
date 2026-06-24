@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560" role="img" aria-labelledby="title desc">
+  <title id="title">FeatherMac automation workflow</title>
+  <desc id="desc">A CI style workflow from imported IPA to provisioning, icon replacement, signing, install and launch validation.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#000" flood-opacity=".28"/>
+    </filter>
+  </defs>
+  <rect width="1280" height="560" rx="32" fill="url(#bg)"/>
+  <text x="72" y="92" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="42" font-weight="700">FeatherMac 自动配置 / Automation</text>
+  <text x="72" y="136" fill="#cbd5e1" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="22">Select an imported IPA, create or reuse a provisioning profile, replace the icon, sign, install, and validate launch.</text>
+  <g filter="url(#shadow)" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">
+    <g transform="translate(72 214)">
+      <rect width="170" height="132" rx="18" fill="#f8fafc"/>
+      <circle cx="85" cy="49" r="24" fill="#2563eb"/>
+      <text x="85" y="57" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">1</text>
+      <text x="85" y="93" text-anchor="middle" fill="#0f172a" font-size="19" font-weight="700">导入 IPA</text>
+      <text x="85" y="118" text-anchor="middle" fill="#475569" font-size="14">Imported app</text>
+    </g>
+    <path d="M258 280h58" stroke="#bae6fd" stroke-width="7" stroke-linecap="round"/>
+    <g transform="translate(334 214)">
+      <rect width="170" height="132" rx="18" fill="#f8fafc"/>
+      <circle cx="85" cy="49" r="24" fill="#7c3aed"/>
+      <text x="85" y="57" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">2</text>
+      <text x="85" y="93" text-anchor="middle" fill="#0f172a" font-size="19" font-weight="700">描述文件</text>
+      <text x="85" y="118" text-anchor="middle" fill="#475569" font-size="14">ASC API profile</text>
+    </g>
+    <path d="M520 280h58" stroke="#bae6fd" stroke-width="7" stroke-linecap="round"/>
+    <g transform="translate(596 214)">
+      <rect width="170" height="132" rx="18" fill="#f8fafc"/>
+      <circle cx="85" cy="49" r="24" fill="#db2777"/>
+      <text x="85" y="57" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">3</text>
+      <text x="85" y="93" text-anchor="middle" fill="#0f172a" font-size="19" font-weight="700">替换图标</text>
+      <text x="85" y="118" text-anchor="middle" fill="#475569" font-size="14">Optional icon</text>
+    </g>
+    <path d="M782 280h58" stroke="#bae6fd" stroke-width="7" stroke-linecap="round"/>
+    <g transform="translate(858 214)">
+      <rect width="170" height="132" rx="18" fill="#f8fafc"/>
+      <circle cx="85" cy="49" r="24" fill="#ea580c"/>
+      <text x="85" y="57" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">4</text>
+      <text x="85" y="93" text-anchor="middle" fill="#0f172a" font-size="19" font-weight="700">签名</text>
+      <text x="85" y="118" text-anchor="middle" fill="#475569" font-size="14">Zsign + profile</text>
+    </g>
+    <path d="M1044 280h58" stroke="#bae6fd" stroke-width="7" stroke-linecap="round"/>
+    <g transform="translate(1120 214)">
+      <rect width="120" height="132" rx="18" fill="#f8fafc"/>
+      <circle cx="60" cy="49" r="24" fill="#16a34a"/>
+      <text x="60" y="57" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">5</text>
+      <text x="60" y="93" text-anchor="middle" fill="#0f172a" font-size="19" font-weight="700">安装</text>
+      <text x="60" y="118" text-anchor="middle" fill="#475569" font-size="14">Install</text>
+    </g>
+  </g>
+  <rect x="72" y="414" width="1136" height="68" rx="16" fill="#ffffff" opacity=".12"/>
+  <text x="102" y="456" fill="#e0f2fe" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="22" font-weight="600">安全提示 / Safety:</text>
+  <text x="286" y="456" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="21">Keys, p12 certificates, provisioning profiles, imported IPAs, and signed IPAs are intentionally ignored by git.</text>
+</svg>

@@ -1,0 +1,41 @@
+# SwiftPM / Xcode
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj/
+*.xcworkspace/
+*.xcuserstate
+*.xcuserdata/
+
+# Packaged application output
+dist/
+*.app
+*.dSYM/
+*.zip
+
+# Signing artifacts and imported apps
+TestArtifacts/
+.zsign_cache/
+*.ipa
+*.tipa
+*.p12
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+*.feathermacconfig
+
+# App Store Connect / Apple Developer secrets
+AuthKey_*.p8
+*.p8
+appstoreconnect.json
+automation.json
+certificates.json
+options.json
+library.json
+sources.json
+
+# Logs and local state
+*.log
+*.ips
+.DS_Store
