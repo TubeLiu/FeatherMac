@@ -16,5 +16,5 @@
 <g transform="translate(1080 214)"><rect width="132" height="132" rx="18" fill="#f8fafc"/><circle cx="66" cy="49" r="24" fill="#16a34a"/><text x="66" y="57" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">5</text><text x="66" y="93" text-anchor="middle" fill="#0f172a" font-size="19" font-weight="700">安装</text><text x="66" y="118" text-anchor="middle" fill="#475569" font-size="14">安装到连接设备</text></g>
   </g>
   <rect x="72" y="414" width="1136" height="68" rx="16" fill="#ffffff" opacity=".12"/>
-  <text x="102" y="456" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="21">安全提示：私钥、p12 证书、描述文件、导入 IPA 和签名 IPA 都会被 git 忽略。</text>
+  <text x="102" y="456" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="21">签名结果会保留在资料库中，可随时重新安装、导出或在访达中显示。</text>
 </svg>

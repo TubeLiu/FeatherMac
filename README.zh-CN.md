@@ -16,21 +16,19 @@
 
 FeatherMac 是一个面向 macOS 的 IPA 管理、修改、签名、安装和自动化工具，目标是在 Mac 上提供类似 Feather iOS 版的工作流体验。它支持 AltSource 浏览、证书导入、IPA 修改、Zsign 签名、连接设备安装、App Store Connect 自动创建描述文件、配置导入导出、iCloud Drive 同步，以及英文/简体中文界面。
 
-> 安全说明：公开仓库不会包含任何个人证书、`.p12`、`.p8`、描述文件、已导入 IPA、签名 IPA 或 App Store Connect 配置导出文件。
-
 ## 产品截图
 
 ### 资料库
 
-![FeatherMac 资料库](docs/assets/screenshots/zh-Hans/library.svg)
+![FeatherMac 资料库](docs/assets/screenshots/zh-Hans/library.png)
 
 ### 自动配置
 
-![FeatherMac 自动配置](docs/assets/screenshots/zh-Hans/automation.svg)
+![FeatherMac 自动配置](docs/assets/screenshots/zh-Hans/automation.png)
 
 ### 签名
 
-![FeatherMac 签名](docs/assets/screenshots/zh-Hans/signing.svg)
+![FeatherMac 签名](docs/assets/screenshots/zh-Hans/signing.png)
 
 ## 功能亮点
 
@@ -78,19 +76,6 @@ open dist/FeatherMac.app
 ```
 
 `scripts/package_app.sh` 会生成 `dist/FeatherMac.app`，并使用 ad-hoc 签名，便于本地运行。
-
-## 安全注意事项
-
-仓库已经忽略以下敏感或本地文件：
-
-- `.p8` App Store Connect 私钥
-- `.p12` 证书
-- `.mobileprovision` / `.provisionprofile` 描述文件
-- 已导入和已签名的 `.ipa` 文件
-- `.feathermacconfig` 配置导出
-- 本地 Application Support JSON 状态
-
-请不要把个人签名材料或 App Store Connect 凭据提交到公开仓库。
 
 ## 致谢
 

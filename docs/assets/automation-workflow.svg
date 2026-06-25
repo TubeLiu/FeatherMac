@@ -16,5 +16,5 @@
 <g transform="translate(1080 214)"><rect width="132" height="132" rx="18" fill="#f8fafc"/><circle cx="66" cy="49" r="24" fill="#16a34a"/><text x="66" y="57" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">5</text><text x="66" y="93" text-anchor="middle" fill="#0f172a" font-size="19" font-weight="700">Install</text><text x="66" y="118" text-anchor="middle" fill="#475569" font-size="14">Install to connected device</text></g>
   </g>
   <rect x="72" y="414" width="1136" height="68" rx="16" fill="#ffffff" opacity=".12"/>
-  <text x="102" y="456" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="21">Safety: private keys, p12 certificates, provisioning profiles, imported IPAs, and signed IPAs are ignored by git.</text>
+  <text x="102" y="456" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="21">Signed results stay in the Library, ready to reinstall, export, or reveal in Finder.</text>
 </svg>

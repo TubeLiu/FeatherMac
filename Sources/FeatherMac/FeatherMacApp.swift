@@ -20,6 +20,7 @@ struct FeatherMacApp: App {
                 .frame(minWidth: 1120, minHeight: 720)
                 .task {
                     await store.bootstrap()
+                    await DocumentationScreenshotRunner.captureIfRequested(store: store)
                 }
         }
         .commands {
@@ -35,6 +36,163 @@ struct FeatherMacApp: App {
                 .keyboardShortcut("n", modifiers: [.command])
             }
         }
+    }
+}
+
+@MainActor
+enum DocumentationScreenshotRunner {
+    static func captureIfRequested(store: AppStore) async {
+        guard let outputPath = ProcessInfo.processInfo.environment["FEATHERMAC_SCREENSHOT_DIR"] else { return }
+        let outputDirectory = URL(fileURLWithPath: outputPath, isDirectory: true)
+
+        do {
+            try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+            seedDemoState(store: store)
+            try await Task.sleep(nanoseconds: 700_000_000)
+
+            guard let window = NSApp.windows.first(where: { $0.isVisible }) else {
+                throw NSError(domain: "FeatherMacScreenshots", code: 1, userInfo: [NSLocalizedDescriptionKey: "No visible FeatherMac window."])
+            }
+            window.setContentSize(NSSize(width: 1120, height: 720))
+            window.center()
+            window.makeKeyAndOrderFront(nil)
+
+            for (pane, filename) in [(Pane.library, "library.png"), (.automation, "automation.png"), (.signing, "signing.png")] {
+                store.pane = pane
+                try await Task.sleep(nanoseconds: 500_000_000)
+                try writePNG(of: window, to: outputDirectory.appendingPathComponent(filename))
+            }
+
+            NSApp.terminate(nil)
+        } catch {
+            fputs("Documentation screenshot capture failed: \(error.localizedDescription)\n", stderr)
+            NSApp.terminate(nil)
+        }
+    }
+
+    private static func seedDemoState(store: AppStore) {
+        let importedID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let signedID = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        let certificateID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let root = "~/Library/Application Support/FeatherMac"
+
+        store.library = [
+            LibraryApp(
+                id: importedID,
+                kind: .imported,
+                name: "Feather iOS",
+                bundleIdentifier: "com.example.feather",
+                version: "2.8.2",
+                sourceURL: nil,
+                storagePath: "\(root)/Imported/Feather",
+                ipaPath: "\(root)/Imported/Feather.ipa",
+                iconPath: nil,
+                importedAt: Date(),
+                certificateID: nil
+            ),
+            LibraryApp(
+                id: signedID,
+                kind: .signed,
+                name: "Feather iOS Signed",
+                bundleIdentifier: "com.example.feathermac.feather",
+                version: "2.8.2",
+                sourceURL: nil,
+                storagePath: "\(root)/Signed/Feather",
+                ipaPath: "\(root)/Signed/Feather-signed.ipa",
+                iconPath: nil,
+                importedAt: Date(),
+                certificateID: certificateID
+            )
+        ]
+        store.selectedAppID = signedID
+        store.certificates = [
+            CertificateRecord(
+                id: certificateID,
+                nickname: "Apple Development Demo",
+                p12Path: "~/Certificates/demo.p12",
+                provisionPath: "~/Profiles/demo.mobileprovision",
+                password: "",
+                expiration: Calendar.current.date(byAdding: .year, value: 1, to: Date()),
+                teamName: "Example Team",
+                teamIdentifier: "ABCDE12345",
+                appIdentifierPrefix: "ABCDE12345",
+                appIDName: "FeatherMac Demo",
+                p12SerialNumber: "DEMO-SERIAL",
+                importedAt: Date(),
+                isDefault: true
+            )
+        ]
+        store.selectedCertID = certificateID
+        store.options.appName = "Feather Mac Demo"
+        store.options.appVersion = "2.8.2"
+        store.options.appIdentifier = "com.example.feathermac.feather"
+        store.options.fileSharing = true
+        store.options.iTunesFileSharing = true
+        store.options.proMotion = true
+        store.options.iPadFullscreen = true
+        store.options.supportLiquidGlass = true
+        store.options.installAfterSigning = true
+        store.appStoreConnect = AppStoreConnectSettings(
+            issuerID: "00000000-0000-0000-0000-000000000000",
+            keyID: "DEMO123456",
+            privateKeyPath: "~/Keys/AuthKey_DEMO123456.p8",
+            bundleIdentifierPrefix: "com.example.feathermac",
+            registerConnectedDevice: true
+        )
+        store.automation = AutomationPipeline(
+            appID: importedID,
+            certificateID: certificateID,
+            iconPath: "~/Pictures/demo-icon.png",
+            installAfterSigning: true,
+            lastSignedAppID: signedID,
+            activeStep: nil,
+            completedSteps: [.selectApp, .createProfile, .replaceIcon, .sign]
+        )
+        store.logs = [
+            LogEntry(level: .success, message: "FeatherMac is ready."),
+            LogEntry(level: .info, message: "Automation workflow prepared."),
+            LogEntry(level: .success, message: "Signed Feather iOS Signed.")
+        ]
+        store.isBusy = false
+        store.progressText = ""
+    }
+
+    private static func writePNG(of window: NSWindow, to url: URL) throws {
+        guard let view = window.contentView else {
+            throw NSError(domain: "FeatherMacScreenshots", code: 2, userInfo: [NSLocalizedDescriptionKey: "Window has no content view."])
+        }
+        let bounds = view.bounds
+        let scale = window.backingScaleFactor
+        guard let representation = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(bounds.width * scale),
+            pixelsHigh: Int(bounds.height * scale),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
+            throw NSError(domain: "FeatherMacScreenshots", code: 3, userInfo: [NSLocalizedDescriptionKey: "Could not create bitmap representation."])
+        }
+        representation.size = bounds.size
+
+        guard let context = NSGraphicsContext(bitmapImageRep: representation) else {
+            throw NSError(domain: "FeatherMacScreenshots", code: 4, userInfo: [NSLocalizedDescriptionKey: "Could not create graphics context."])
+        }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        NSColor.windowBackgroundColor.setFill()
+        bounds.fill()
+        view.displayIgnoringOpacity(bounds, in: context)
+        NSGraphicsContext.restoreGraphicsState()
+
+        guard let data = representation.representation(using: .png, properties: [:]) else {
+            throw NSError(domain: "FeatherMacScreenshots", code: 5, userInfo: [NSLocalizedDescriptionKey: "Could not encode PNG."])
+        }
+        try data.write(to: url, options: .atomic)
     }
 }
 

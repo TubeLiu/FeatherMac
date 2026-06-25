@@ -16,21 +16,19 @@
 
 FeatherMac is a native macOS IPA library, modification, signing, installation, and automation tool inspired by the Feather iOS workflow. It supports AltSource browsing, certificate management, IPA customization, Zsign-based signing, connected-device installation, App Store Connect provisioning automation, configuration export/import, iCloud Drive sync, and English/Simplified Chinese localization.
 
-> Security note: this public repository intentionally excludes personal certificates, `.p12` files, `.p8` keys, provisioning profiles, imported IPA files, signed IPA files, and App Store Connect configuration exports.
-
 ## Screenshots
 
 ### Library
 
-![FeatherMac Library](docs/assets/screenshots/en/library.svg)
+![FeatherMac Library](docs/assets/screenshots/en/library.png)
 
 ### Automation
 
-![FeatherMac Automation](docs/assets/screenshots/en/automation.svg)
+![FeatherMac Automation](docs/assets/screenshots/en/automation.png)
 
 ### Signing
 
-![FeatherMac Signing](docs/assets/screenshots/en/signing.svg)
+![FeatherMac Signing](docs/assets/screenshots/en/signing.png)
 
 ## Highlights
 
@@ -78,19 +76,6 @@ open dist/FeatherMac.app
 ```
 
 `scripts/package_app.sh` creates `dist/FeatherMac.app` and applies an ad-hoc signature for local use.
-
-## Security Notes
-
-This repository intentionally ignores:
-
-- `.p8` App Store Connect private keys
-- `.p12` certificates
-- `.mobileprovision` / `.provisionprofile` files
-- imported and signed `.ipa` files
-- `.feathermacconfig` exports
-- local Application Support JSON state
-
-Never commit personal signing material or App Store Connect credentials.
 
 ## Credits
 
