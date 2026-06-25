@@ -60,7 +60,7 @@ enum DocumentationScreenshotRunner {
             for (pane, filename) in [(Pane.library, "library.png"), (.automation, "automation.png"), (.signing, "signing.png")] {
                 store.pane = pane
                 try await Task.sleep(nanoseconds: 500_000_000)
-                try writePNG(of: window, to: outputDirectory.appendingPathComponent(filename))
+                try captureWindow(window, to: outputDirectory.appendingPathComponent(filename))
             }
 
             NSApp.terminate(nil)
@@ -75,6 +75,9 @@ enum DocumentationScreenshotRunner {
         let signedID = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
         let certificateID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
         let root = "~/Library/Application Support/FeatherMac"
+        let demoIconPath = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Assets/Source/FeatherMacIcon.png")
+            .path
 
         store.library = [
             LibraryApp(
@@ -86,7 +89,7 @@ enum DocumentationScreenshotRunner {
                 sourceURL: nil,
                 storagePath: "\(root)/Imported/Feather",
                 ipaPath: "\(root)/Imported/Feather.ipa",
-                iconPath: nil,
+                iconPath: demoIconPath,
                 importedAt: Date(),
                 certificateID: nil
             ),
@@ -99,7 +102,7 @@ enum DocumentationScreenshotRunner {
                 sourceURL: nil,
                 storagePath: "\(root)/Signed/Feather",
                 ipaPath: "\(root)/Signed/Feather-signed.ipa",
-                iconPath: nil,
+                iconPath: demoIconPath,
                 importedAt: Date(),
                 certificateID: certificateID
             )
@@ -157,40 +160,20 @@ enum DocumentationScreenshotRunner {
         store.progressText = ""
     }
 
-    private static func writePNG(of window: NSWindow, to url: URL) throws {
-        guard let view = window.contentView else {
-            throw NSError(domain: "FeatherMacScreenshots", code: 2, userInfo: [NSLocalizedDescriptionKey: "Window has no content view."])
+    private static func captureWindow(_ window: NSWindow, to url: URL) throws {
+        let windowID = CGWindowID(window.windowNumber)
+        let options = CGWindowImageOption.boundsIgnoreFraming.union(.bestResolution)
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else {
+            throw NSError(domain: "FeatherMacScreenshots", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not load window capture API."])
         }
-        let bounds = view.bounds
-        let scale = window.backingScaleFactor
-        guard let representation = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: Int(bounds.width * scale),
-            pixelsHigh: Int(bounds.height * scale),
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: 0,
-            bitsPerPixel: 0
-        ) else {
-            throw NSError(domain: "FeatherMacScreenshots", code: 3, userInfo: [NSLocalizedDescriptionKey: "Could not create bitmap representation."])
+        typealias WindowCaptureFunction = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> CGImage?
+        let capture = unsafeBitCast(symbol, to: WindowCaptureFunction.self)
+        guard let image = capture(.null, CGWindowListOption.optionIncludingWindow.rawValue, windowID, options.rawValue) else {
+            throw NSError(domain: "FeatherMacScreenshots", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not capture FeatherMac window."])
         }
-        representation.size = bounds.size
-
-        guard let context = NSGraphicsContext(bitmapImageRep: representation) else {
-            throw NSError(domain: "FeatherMacScreenshots", code: 4, userInfo: [NSLocalizedDescriptionKey: "Could not create graphics context."])
-        }
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = context
-        NSColor.windowBackgroundColor.setFill()
-        bounds.fill()
-        view.displayIgnoringOpacity(bounds, in: context)
-        NSGraphicsContext.restoreGraphicsState()
-
+        let representation = NSBitmapImageRep(cgImage: image)
         guard let data = representation.representation(using: .png, properties: [:]) else {
-            throw NSError(domain: "FeatherMacScreenshots", code: 5, userInfo: [NSLocalizedDescriptionKey: "Could not encode PNG."])
+            throw NSError(domain: "FeatherMacScreenshots", code: 3, userInfo: [NSLocalizedDescriptionKey: "Could not encode PNG."])
         }
         try data.write(to: url, options: .atomic)
     }
