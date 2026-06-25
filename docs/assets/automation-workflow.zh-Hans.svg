@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560" role="img" aria-labelledby="title desc">
+  <title id="title">FeatherMac 自动配置</title>
+  <desc id="desc">从已导入 IPA 到描述文件、图标替换、签名和安装的一站式工作流。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#111827"/><stop offset="1" stop-color="#0f766e"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#000" flood-opacity=".28"/></filter>
+  </defs>
+  <rect width="1280" height="560" rx="32" fill="url(#bg)"/>
+  <text x="72" y="92" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="42" font-weight="700">FeatherMac 自动配置</text>
+  <text x="72" y="136" fill="#cbd5e1" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="22">从已导入 IPA 到描述文件、图标替换、签名和安装的一站式工作流。</text>
+  <g filter="url(#shadow)" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">
+    <g transform="translate(72 214)"><rect width="170" height="132" rx="18" fill="#f8fafc"/><circle cx="85" cy="49" r="24" fill="#2563eb"/><text x="85" y="57" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">1</text><text x="85" y="93" text-anchor="middle" fill="#0f172a" font-size="19" font-weight="700">导入 IPA</text><text x="85" y="118" text-anchor="middle" fill="#475569" font-size="14">选择资料库中的 IPA</text></g><path d="M258 280h54" stroke="#bae6fd" stroke-width="7" stroke-linecap="round"/>
+<g transform="translate(324 214)"><rect width="170" height="132" rx="18" fill="#f8fafc"/><circle cx="85" cy="49" r="24" fill="#7c3aed"/><text x="85" y="57" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">2</text><text x="85" y="93" text-anchor="middle" fill="#0f172a" font-size="19" font-weight="700">创建描述文件</text><text x="85" y="118" text-anchor="middle" fill="#475569" font-size="14">通过 ASC API 创建或复用</text></g><path d="M510 280h54" stroke="#bae6fd" stroke-width="7" stroke-linecap="round"/>
+<g transform="translate(576 214)"><rect width="170" height="132" rx="18" fill="#f8fafc"/><circle cx="85" cy="49" r="24" fill="#db2777"/><text x="85" y="57" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">3</text><text x="85" y="93" text-anchor="middle" fill="#0f172a" font-size="19" font-weight="700">替换图标</text><text x="85" y="118" text-anchor="middle" fill="#475569" font-size="14">可选替换应用图标</text></g><path d="M762 280h54" stroke="#bae6fd" stroke-width="7" stroke-linecap="round"/>
+<g transform="translate(828 214)"><rect width="170" height="132" rx="18" fill="#f8fafc"/><circle cx="85" cy="49" r="24" fill="#ea580c"/><text x="85" y="57" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">4</text><text x="85" y="93" text-anchor="middle" fill="#0f172a" font-size="19" font-weight="700">签名</text><text x="85" y="118" text-anchor="middle" fill="#475569" font-size="14">Zsign + 描述文件</text></g><path d="M1014 280h54" stroke="#bae6fd" stroke-width="7" stroke-linecap="round"/>
+<g transform="translate(1080 214)"><rect width="132" height="132" rx="18" fill="#f8fafc"/><circle cx="66" cy="49" r="24" fill="#16a34a"/><text x="66" y="57" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">5</text><text x="66" y="93" text-anchor="middle" fill="#0f172a" font-size="19" font-weight="700">安装</text><text x="66" y="118" text-anchor="middle" fill="#475569" font-size="14">安装到连接设备</text></g>
+  </g>
+  <rect x="72" y="414" width="1136" height="68" rx="16" fill="#ffffff" opacity=".12"/>
+  <text x="102" y="456" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="21">安全提示：私钥、p12 证书、描述文件、导入 IPA 和签名 IPA 都会被 git 忽略。</text>
+</svg>
