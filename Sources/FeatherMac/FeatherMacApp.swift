@@ -464,8 +464,9 @@ final class AppStore: ObservableObject {
             options = try storage.loadOptions()
             appStoreConnect = try storage.loadAppStoreConnectSettings()
             automation = try storage.loadAutomationPipeline()
-            if sources.isEmpty {
-                sources = SourceService.defaultSources
+            let sanitizedSources = SourceService.sanitizedSources(sources)
+            if sanitizedSources != sources {
+                sources = sanitizedSources
                 try storage.saveSources(sources)
             }
             selectedAppID = library.first?.id
@@ -2328,10 +2329,34 @@ final class FeatherStorage: @unchecked Sendable {
 
 final class SourceService: @unchecked Sendable {
     static let defaultSources: [SourceRecord] = [
-        SourceRecord(url: URL(string: "https://raw.githubusercontent.com/SideStore/apps.json/refs/heads/main/apps.json")!, name: "SideStore"),
-        SourceRecord(url: URL(string: "https://raw.githubusercontent.com/altstoreio/AltStore/refs/heads/master/apps.json")!, name: "AltStore"),
-        SourceRecord(url: URL(string: "https://raw.githubusercontent.com/claration/Feather/refs/heads/main/app-repo.json")!, name: "Feather")
+        SourceRecord(url: URL(string: "https://cdn.altstore.io/file/altstore/apps.json")!, name: "AltStore"),
+        SourceRecord(url: URL(string: "https://sidestore.io/apps.json")!, name: "SideStore"),
+        SourceRecord(url: URL(string: "https://raw.githubusercontent.com/claration/Feather/refs/heads/main/app-repo.json")!, name: "Feather"),
+        SourceRecord(url: URL(string: "https://ish.app/altstore.json")!, name: "iSH"),
+        SourceRecord(url: URL(string: "https://alt.getutm.app")!, name: "UTM")
     ]
+
+    private static let retiredDefaultSourceURLs: Set<String> = [
+        "https://raw.githubusercontent.com/SideStore/apps.json/refs/heads/main/apps.json",
+        "https://raw.githubusercontent.com/altstoreio/AltStore/refs/heads/master/apps.json",
+        "https://apps.altstore.io"
+    ]
+
+    static func sanitizedSources(_ existing: [SourceRecord]) -> [SourceRecord] {
+        var result: [SourceRecord] = []
+        var seen = Set<String>()
+
+        for source in existing where !retiredDefaultSourceURLs.contains(source.url.absoluteString) {
+            guard seen.insert(source.url.absoluteString).inserted else { continue }
+            result.append(source)
+        }
+
+        for source in defaultSources where seen.insert(source.url.absoluteString).inserted {
+            result.append(source)
+        }
+
+        return result
+    }
 
     func fetch(url: URL) async throws -> ASRepository {
         let (data, response) = try await URLSession.shared.data(from: url)
