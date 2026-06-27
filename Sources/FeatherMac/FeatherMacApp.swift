@@ -246,19 +246,49 @@ struct LogEntry: Identifiable, Codable {
 }
 
 struct SourceRecord: Identifiable, Codable, Hashable {
+    enum Kind: String, Codable, Hashable {
+        case altSource
+        case apt
+    }
+
     var id = UUID()
     var url: URL
     var name: String
     var identifier: String?
     var iconURL: URL?
+    var kind: Kind? = nil
     var addedAt = Date()
 }
 
 struct RepoCache: Identifiable {
     var id: UUID { source.id }
     var source: SourceRecord
-    var repository: ASRepository?
-    var error: String?
+    var repository: ASRepository? = nil
+    var aptRepository: APTRepository? = nil
+    var error: String? = nil
+}
+
+struct APTRepository: Hashable {
+    var name: String
+    var packages: [APTPackage]
+}
+
+struct APTPackage: Identifiable, Hashable {
+    var id: String { packageIdentifier }
+    var packageIdentifier: String
+    var name: String?
+    var version: String?
+    var section: String?
+    var architecture: String?
+    var maintainer: String?
+    var author: String?
+    var summary: String?
+    var description: String?
+    var filename: String?
+    var size: Int64?
+    var depictionURL: URL?
+    var iconURL: URL?
+    var downloadURL: URL?
 }
 
 struct LibraryApp: Identifiable, Codable, Hashable {
@@ -510,15 +540,31 @@ final class AppStore: ObservableObject {
         repos = sources.map { RepoCache(source: $0, repository: nil, error: nil) }
         for source in sources {
             do {
-                let repository = try await sourceService.fetch(url: source.url)
+                let fetched = try await sourceService.fetchSource(url: source.url)
                 if let index = repos.firstIndex(where: { $0.source.id == source.id }) {
-                    repos[index].repository = repository
+                    switch fetched {
+                    case .altSource(let repository):
+                        repos[index].repository = repository
+                        repos[index].aptRepository = nil
+                    case .apt(let repository):
+                        repos[index].repository = nil
+                        repos[index].aptRepository = repository
+                    }
                     repos[index].error = nil
                 }
                 if let sourceIndex = sources.firstIndex(where: { $0.id == source.id }) {
-                    sources[sourceIndex].name = repository.name ?? source.name
-                    sources[sourceIndex].identifier = repository.id
-                    sources[sourceIndex].iconURL = repository.currentIconURL
+                    switch fetched {
+                    case .altSource(let repository):
+                        sources[sourceIndex].name = repository.name ?? source.name
+                        sources[sourceIndex].identifier = repository.id
+                        sources[sourceIndex].iconURL = repository.currentIconURL
+                        sources[sourceIndex].kind = .altSource
+                    case .apt(let repository):
+                        sources[sourceIndex].name = repository.name
+                        sources[sourceIndex].identifier = nil
+                        sources[sourceIndex].iconURL = nil
+                        sources[sourceIndex].kind = .apt
+                    }
                 }
                 try? storage.saveSources(sources)
             } catch {
@@ -536,13 +582,26 @@ final class AppStore: ObservableObject {
             return
         }
         do {
-            let repo = try await sourceService.fetch(url: url)
-            let source = SourceRecord(
-                url: url,
-                name: repo.name ?? url.host ?? url.absoluteString,
-                identifier: repo.id,
-                iconURL: repo.currentIconURL
-            )
+            let fetched = try await sourceService.fetchSource(url: url)
+            let source: SourceRecord
+            switch fetched {
+            case .altSource(let repo):
+                source = SourceRecord(
+                    url: url,
+                    name: repo.name ?? url.host ?? url.absoluteString,
+                    identifier: repo.id,
+                    iconURL: repo.currentIconURL,
+                    kind: .altSource
+                )
+            case .apt(let repo):
+                source = SourceRecord(
+                    url: url,
+                    name: repo.name,
+                    identifier: nil,
+                    iconURL: nil,
+                    kind: .apt
+                )
+            }
             sources.removeAll { $0.url == url }
             sources.append(source)
             sourceURLDraft = ""
@@ -1401,6 +1460,18 @@ struct SourcesView: View {
         }
     }
 
+    private var packages: [APTPackage] {
+        let allPackages = selectedRepo?.aptRepository?.packages ?? []
+        guard !searchText.isEmpty else { return allPackages }
+        return allPackages.filter {
+            $0.packageIdentifier.localizedCaseInsensitiveContains(searchText) ||
+            ($0.name ?? "").localizedCaseInsensitiveContains(searchText) ||
+            ($0.summary ?? "").localizedCaseInsensitiveContains(searchText) ||
+            ($0.description ?? "").localizedCaseInsensitiveContains(searchText) ||
+            ($0.section ?? "").localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
     var body: some View {
         HSplitView {
             VStack(spacing: 0) {
@@ -1446,6 +1517,14 @@ struct SourcesView: View {
 
                 if let error = selectedRepo?.error {
                     EmptyState(title: error, systemImage: "exclamationmark.triangle")
+                } else if selectedRepo?.aptRepository != nil {
+                    if packages.isEmpty {
+                        EmptyState(title: L10n.string("No packages"), systemImage: "shippingbox")
+                    } else {
+                        List(packages) { package in
+                            APTPackageRow(package: package)
+                        }
+                    }
                 } else if apps.isEmpty {
                     EmptyState(title: L10n.string("No apps"), systemImage: "tray")
                 } else {
@@ -1483,6 +1562,10 @@ struct SourceRow: View {
                 Text("\(count) \(L10n.string("apps"))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } else if let count = cache.aptRepository?.packages.count {
+                Text("\(count) \(L10n.string("packages"))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             } else {
                 Text(L10n.string("Loading"))
                     .font(.caption)
@@ -1490,6 +1573,62 @@ struct SourceRow: View {
             }
         }
         .padding(.vertical, 5)
+    }
+}
+
+struct APTPackageRow: View {
+    var package: APTPackage
+
+    private var title: String {
+        package.name?.nonEmpty ?? package.packageIdentifier
+    }
+
+    private var subtitle: String {
+        package.summary?.nonEmpty ?? package.description?.lines.first ?? package.packageIdentifier
+    }
+
+    private var detail: String {
+        [
+            package.version.map { L10n.format("Version %@", $0) },
+            package.section,
+            package.architecture
+        ].compactMap { $0?.nonEmpty }.joined(separator: "  ")
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            RemoteIcon(url: package.iconURL)
+                .frame(width: 48, height: 48)
+                .overlay {
+                    if package.iconURL == nil {
+                        Image(systemName: "shippingbox")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(package.packageIdentifier)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Text(L10n.string("APT Package"))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 6)
     }
 }
 
@@ -2328,6 +2467,11 @@ final class FeatherStorage: @unchecked Sendable {
 }
 
 final class SourceService: @unchecked Sendable {
+    enum FetchedSource {
+        case altSource(ASRepository)
+        case apt(APTRepository)
+    }
+
     static let defaultSources: [SourceRecord] = [
         SourceRecord(url: URL(string: "https://cdn.altstore.io/file/altstore/apps.json")!, name: "AltStore"),
         SourceRecord(url: URL(string: "https://sidestore.io/apps.json")!, name: "SideStore"),
@@ -2358,11 +2502,20 @@ final class SourceService: @unchecked Sendable {
         return result
     }
 
-    func fetch(url: URL) async throws -> ASRepository {
-        let (data, response) = try await URLSession.shared.data(from: url)
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            throw FeatherError.message("HTTP \(http.statusCode) for \(url.absoluteString)")
+    func fetchSource(url: URL) async throws -> FetchedSource {
+        do {
+            return .altSource(try await fetch(url: url))
+        } catch {
+            do {
+                return .apt(try await fetchAPT(url: url))
+            } catch {
+                throw FeatherError.message(L10n.string("Source is not a supported AltSource or APT repository."))
+            }
         }
+    }
+
+    func fetch(url: URL) async throws -> ASRepository {
+        let data = try await fetchData(url: url)
         return try JSONDecoder.altSource.decode(ASRepository.self, from: data)
     }
 
@@ -2377,6 +2530,159 @@ final class SourceService: @unchecked Sendable {
         try FileManager.default.removeItemIfExists(at: destination)
         try FileManager.default.moveItem(at: tempURL, to: destination)
         return destination
+    }
+
+    func fetchAPT(url: URL) async throws -> APTRepository {
+        var failures: [String] = []
+        for candidate in aptPackageCandidates(for: url) {
+            do {
+                let data = try await fetchData(url: candidate)
+                let packageData = try decompressAPTData(data, from: candidate)
+                guard let text = String(data: packageData, encoding: .utf8) else {
+                    throw FeatherError.message("APT Packages file is not UTF-8.")
+                }
+                let baseURL = aptRepositoryBaseURL(sourceURL: url, packageURL: candidate)
+                let packages = Self.parsePackages(text, baseURL: baseURL)
+                guard !packages.isEmpty else {
+                    throw FeatherError.message("APT Packages file did not contain packages.")
+                }
+                return APTRepository(
+                    name: aptRepositoryName(from: url),
+                    packages: packages.sorted { ($0.name ?? $0.packageIdentifier) < ($1.name ?? $1.packageIdentifier) }
+                )
+            } catch {
+                failures.append("\(candidate.absoluteString): \(error.localizedDescription)")
+            }
+        }
+        throw FeatherError.message(failures.last ?? "No APT Packages file was found.")
+    }
+
+    static func parsePackages(_ text: String, baseURL: URL) -> [APTPackage] {
+        var packages: [APTPackage] = []
+        var fields: [String: String] = [:]
+        var currentField: String?
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+
+        func commitPackage() {
+            guard let identifier = fields["Package"]?.trimmed.nonEmpty else {
+                fields = [:]
+                currentField = nil
+                return
+            }
+            let filename = fields["Filename"]?.trimmed.nonEmpty
+            let package = APTPackage(
+                packageIdentifier: identifier,
+                name: fields["Name"]?.trimmed.nonEmpty,
+                version: fields["Version"]?.trimmed.nonEmpty,
+                section: fields["Section"]?.trimmed.nonEmpty,
+                architecture: fields["Architecture"]?.trimmed.nonEmpty,
+                maintainer: fields["Maintainer"]?.trimmed.nonEmpty,
+                author: fields["Author"]?.trimmed.nonEmpty,
+                summary: fields["Description"]?.split(separator: "\n", maxSplits: 1).first.map { String($0).trimmed }.flatMap(\.nonEmpty),
+                description: fields["Description"]?.trimmed.nonEmpty,
+                filename: filename,
+                size: fields["Size"].flatMap { Int64($0.trimmed) },
+                depictionURL: fields["Depiction"].flatMap { URL(string: $0.trimmed) },
+                iconURL: fields["Icon"].flatMap { URL(string: $0.trimmed) },
+                downloadURL: filename.flatMap { packageDownloadURL(filename: $0, baseURL: baseURL) }
+            )
+            packages.append(package)
+            fields = [:]
+            currentField = nil
+        }
+
+        for line in normalized.components(separatedBy: "\n") + [""] {
+            if line.trimmed.isEmpty {
+                commitPackage()
+                continue
+            }
+            if line.hasPrefix(" ") || line.hasPrefix("\t") {
+                guard let currentField else { continue }
+                fields[currentField, default: ""] += "\n" + line.trimmed
+                continue
+            }
+            let pieces = line.split(separator: ":", maxSplits: 1).map(String.init)
+            guard pieces.count == 2 else { continue }
+            currentField = pieces[0]
+            fields[pieces[0]] = pieces[1].trimmed
+        }
+
+        return packages
+    }
+
+    private func fetchData(url: URL) async throws -> Data {
+        let (data, response) = try await URLSession.shared.data(from: url)
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw FeatherError.message("HTTP \(http.statusCode) for \(url.absoluteString)")
+        }
+        return data
+    }
+
+    private func aptPackageCandidates(for url: URL) -> [URL] {
+        let lowercasedPath = url.path.lowercased()
+        if lowercasedPath.hasSuffix("/packages") ||
+            lowercasedPath.hasSuffix("/packages.gz") ||
+            lowercasedPath.hasSuffix("/packages.bz2") {
+            return [url]
+        }
+
+        return [
+            url.appendingPathComponent("Packages"),
+            url.appendingPathComponent("Packages.gz"),
+            url.appendingPathComponent("Packages.bz2"),
+            url.appendingPathComponent("dists/stable/main/binary-iphoneos-arm/Packages"),
+            url.appendingPathComponent("dists/stable/main/binary-iphoneos-arm/Packages.gz"),
+            url.appendingPathComponent("dists/stable/main/binary-iphoneos-arm/Packages.bz2")
+        ]
+    }
+
+    private func decompressAPTData(_ data: Data, from url: URL) throws -> Data {
+        switch url.pathExtension.lowercased() {
+        case "gz":
+            return try decompress(data: data, tool: "/usr/bin/gzip")
+        case "bz2":
+            return try decompress(data: data, tool: "/usr/bin/bzip2")
+        default:
+            return data
+        }
+    }
+
+    private func decompress(data: Data, tool: String) throws -> Data {
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent("FeatherMac-APT-\(UUID().uuidString)")
+        try data.write(to: temp)
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let output = try ProcessRunner.capture(tool, ["-dc", temp.path])
+        return Data(output.utf8)
+    }
+
+    private func aptRepositoryName(from url: URL) -> String {
+        url.host ?? url.deletingLastPathComponent().lastPathComponent.nonEmpty ?? url.absoluteString
+    }
+
+    private func aptRepositoryBaseURL(sourceURL: URL, packageURL: URL) -> URL {
+        let lowercasedPath = sourceURL.path.lowercased()
+        if lowercasedPath.hasSuffix("/packages") ||
+            lowercasedPath.hasSuffix("/packages.gz") ||
+            lowercasedPath.hasSuffix("/packages.bz2") {
+            return sourceURL.deletingLastPathComponent()
+        }
+        let packagePath = packageURL.path.lowercased()
+        if packagePath.contains("/dists/stable/main/binary-iphoneos-arm/") {
+            return packageURL
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+        }
+        return sourceURL
+    }
+
+    private static func packageDownloadURL(filename: String, baseURL: URL) -> URL? {
+        if let absolute = URL(string: filename), absolute.scheme != nil {
+            return absolute
+        }
+        return URL(string: filename, relativeTo: baseURL)?.absoluteURL
     }
 }
 

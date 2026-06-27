@@ -29,9 +29,12 @@
 "Add" = "添加";
 "Search apps" = "搜索应用";
 "No apps" = "没有应用";
+"No packages" = "没有软件包";
 "Loading" = "正在加载";
 "Download" = "下载";
 "Version %@" = "版本 %@";
+"packages" = "个软件包";
+"APT Package" = "APT 软件包";
 "Import Certificate" = "导入证书";
 "P12 password" = "P12 密码";
 "Choose .p12 and .mobileprovision" = "选择 .p12 和 .mobileprovision";
@@ -161,6 +164,7 @@
 "Could not render PNG icon." = "无法渲染 PNG 图标。";
 "Could not read Info.plist." = "无法读取 Info.plist。";
 "Enter a valid source URL." = "请输入有效的源 URL。";
+"Source is not a supported AltSource or APT repository." = "这个源不是受支持的 AltSource 或 APT 仓库。";
 "This app does not expose a download URL." = "这个应用没有提供下载 URL。";
 "Import a certificate or switch signing mode to Modify only." = "请导入证书，或把签名类型切换为“仅修改”。";
 "Select an imported app first." = "请先选择已导入的应用。";
