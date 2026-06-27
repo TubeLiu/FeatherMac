@@ -288,7 +288,7 @@ struct CertificateRecord: Identifiable, Codable, Hashable {
     var id = UUID()
     var nickname: String
     var p12Path: String
-    var provisionPath: String
+    var provisionPath: String? = nil
     var password: String
     var expiration: Date?
     var teamName: String?
@@ -300,7 +300,7 @@ struct CertificateRecord: Identifiable, Codable, Hashable {
     var isDefault = false
 
     var p12URL: URL { URL(fileURLWithPath: p12Path) }
-    var provisionURL: URL { URL(fileURLWithPath: provisionPath) }
+    var provisionURL: URL? { provisionPath.map { URL(fileURLWithPath: $0) } }
 }
 
 struct AppStoreConnectSettings: Codable, Equatable {
@@ -384,6 +384,7 @@ struct SigningOptions: Codable, Equatable {
     var appName = ""
     var appVersion = ""
     var appIdentifier = ""
+    var provisionPath: String? = nil
     var entitlementsPath = ""
     var iconPath = ""
     var appearance: Appearance = .default
@@ -469,6 +470,10 @@ final class AppStore: ObservableObject {
             }
             selectedAppID = library.first?.id
             selectedCertID = certificates.first(where: \.isDefault)?.id ?? certificates.first?.id
+            if options.provisionPath?.trimmed.nonEmpty == nil,
+               let legacyProvisionPath = selectedCert?.provisionPath?.trimmed.nonEmpty {
+                options.provisionPath = legacyProvisionPath
+            }
             if automation.appID == nil {
                 automation.appID = library.first(where: { $0.kind == .imported })?.id
             }
@@ -595,14 +600,12 @@ final class AppStore: ObservableObject {
     func pickCertificateFiles() async {
         let p12 = FilePicker.open(types: [.init(filenameExtension: "p12")!])
         guard let p12 else { return }
-        let provision = FilePicker.open(types: [.init(filenameExtension: "mobileprovision")!, .init(filenameExtension: "provisionprofile")!])
-        guard let provision else { return }
-        await importCertificate(p12: p12, provision: provision, password: certificatePasswordDraft)
+        await importCertificate(p12: p12, password: certificatePasswordDraft)
     }
 
-    func importCertificate(p12: URL, provision: URL, password: String) async {
+    func importCertificate(p12: URL, password: String) async {
         await runBusy("Importing certificate...") {
-            let cert = try CertificateService.importCertificate(p12: p12, provision: provision, password: password, storage: self.storage)
+            let cert = try CertificateService.importCertificate(p12: p12, password: password, storage: self.storage)
             await MainActor.run {
                 var record = cert
                 if self.certificates.isEmpty {
@@ -643,8 +646,16 @@ final class AppStore: ObservableObject {
             log(.error, "Import a certificate or switch signing mode to Modify only.")
             return
         }
+        let provisionURL = selectedProvisionURL()
+        if options.signingMode == .certificate && provisionURL == nil {
+            log(.error, L10n.string("Choose a provisioning profile before signing."))
+            return
+        }
         await runBusy("Signing \(app.name)...") {
-            let signed = try await self.ipaService.sign(app: app, certificate: cert, options: self.options, storage: self.storage) { message in
+            if let cert, let provisionURL {
+                try self.validateSigningMaterials(app: app, certificate: cert, provisionURL: provisionURL, options: self.options)
+            }
+            let signed = try await self.ipaService.sign(app: app, certificate: cert, provisionURL: provisionURL, options: self.options, storage: self.storage) { message in
                 Task { @MainActor in self.progressText = message }
             }
             await MainActor.run {
@@ -659,6 +670,29 @@ final class AppStore: ObservableObject {
             if await MainActor.run(body: { self.options.installAfterSigning }) {
                 try await self.installService.install(app: signed)
                 await MainActor.run { self.log(.success, "Install command completed.") }
+            }
+        }
+    }
+
+    private func validateSigningMaterials(app: LibraryApp, certificate: CertificateRecord, provisionURL: URL, options: SigningOptions) throws {
+        guard FileManager.default.fileExists(atPath: provisionURL.path) else {
+            throw FeatherError.message(L10n.string("Provisioning profile file is missing."))
+        }
+        let metadata = CertificateService.parseProvision(provisionURL)
+        let expectedBundleID = options.appIdentifier.trimmed.nonEmpty ?? app.bundleIdentifier
+        if let profileBundleID = metadata.bundleIdentifier, profileBundleID != expectedBundleID {
+            throw FeatherError.message(L10n.format("Provisioning profile Bundle ID %@ does not match %@.", profileBundleID, expectedBundleID))
+        }
+        if let profileTeamID = metadata.teamIdentifier,
+           let certificateTeamID = certificate.teamIdentifier,
+           profileTeamID != certificateTeamID {
+            throw FeatherError.message(L10n.format("Provisioning profile team %@ does not match certificate team %@.", profileTeamID, certificateTeamID))
+        }
+        let serial = try CertificateService.p12CertificateSerialNumber(p12: certificate.p12URL, password: certificate.password)
+        if let serial, !serial.isEmpty {
+            let provisionSerials = try CertificateService.developerCertificateSerials(in: provisionURL)
+            if !provisionSerials.isEmpty && !provisionSerials.contains(serial.uppercased()) {
+                throw FeatherError.message(L10n.string("Provisioning profile does not include the selected certificate."))
             }
         }
     }
@@ -723,6 +757,24 @@ final class AppStore: ObservableObject {
             options.iconPath = url.path
             saveAll()
         }
+    }
+
+    func pickProvisioningProfile() {
+        guard let url = FilePicker.open(types: [.init(filenameExtension: "mobileprovision")!, .init(filenameExtension: "provisionprofile")!]) else { return }
+        options.provisionPath = url.path
+        let metadata = CertificateService.parseProvision(url)
+        if let bundleIdentifier = metadata.bundleIdentifier {
+            options.appIdentifier = bundleIdentifier
+        }
+        saveAll()
+        log(.success, L10n.format("Selected provisioning profile %@.", url.lastPathComponent))
+    }
+
+    func selectedProvisionURL() -> URL? {
+        if let path = options.provisionPath?.trimmed.nonEmpty {
+            return URL(fileURLWithPath: path)
+        }
+        return selectedCert?.provisionURL
     }
 
     func pickAutomationIcon() {
@@ -793,7 +845,6 @@ final class AppStore: ObservableObject {
             let profileURL = profileDirectory.appendingPathComponent("\(BundleIdentifierGenerator.safeComponent(suggestedIdentifier)).mobileprovision")
             try profile.data.write(to: profileURL, options: .atomic)
             let metadata = CertificateService.parseProvision(profileURL)
-            workingCert.provisionPath = profileURL.path
             workingCert.expiration = metadata.expiration
             workingCert.teamName = metadata.teamName ?? workingCert.teamName
             workingCert.teamIdentifier = metadata.teamIdentifier ?? workingCert.teamIdentifier
@@ -806,6 +857,7 @@ final class AppStore: ObservableObject {
                 self.selectedCertID = workingCert.id
                 self.options.appName = app.name
                 self.options.appIdentifier = suggestedIdentifier
+                self.options.provisionPath = profileURL.path
                 self.options.signingMode = .certificate
                 self.saveAll()
                 self.log(.success, "Created provisioning profile \(profile.name).")
@@ -851,10 +903,11 @@ final class AppStore: ObservableObject {
                 certificate: cert,
                 configuredPrefix: configured.bundleIdentifierPrefix
             )
-            let updatedCert = try await self.createProvisioningProfile(app: app, certificate: cert, bundleIdentifier: bundleID, settings: configured)
+            let (updatedCert, profileURL) = try await self.createProvisioningProfile(app: app, certificate: cert, bundleIdentifier: bundleID, settings: configured)
             await MainActor.run {
                 self.options.appName = app.name
                 self.options.appIdentifier = bundleID
+                self.options.provisionPath = profileURL.path
                 self.options.signingMode = .certificate
                 self.selectedAppID = app.id
                 self.selectedCertID = updatedCert.id
@@ -876,7 +929,7 @@ final class AppStore: ObservableObject {
 
             await MainActor.run { self.automation.activeStep = .sign }
             let workflowOptions = await MainActor.run { self.options }
-            let signed = try await self.ipaService.sign(app: app, certificate: updatedCert, options: workflowOptions, storage: self.storage) { message in
+            let signed = try await self.ipaService.sign(app: app, certificate: updatedCert, provisionURL: profileURL, options: workflowOptions, storage: self.storage) { message in
                 Task { @MainActor in self.progressText = message }
             }
             await MainActor.run {
@@ -923,7 +976,7 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func createProvisioningProfile(app: LibraryApp, certificate: CertificateRecord, bundleIdentifier: String, settings: AppStoreConnectSettings) async throws -> CertificateRecord {
+    private func createProvisioningProfile(app: LibraryApp, certificate: CertificateRecord, bundleIdentifier: String, settings: AppStoreConnectSettings) async throws -> (CertificateRecord, URL) {
         var workingCert = certificate
         if workingCert.p12SerialNumber?.isEmpty != false {
             workingCert.p12SerialNumber = try CertificateService.p12CertificateSerialNumber(
@@ -952,7 +1005,6 @@ final class AppStore: ObservableObject {
             profileName = profile.name
         }
         let metadata = CertificateService.parseProvision(profileURL)
-        workingCert.provisionPath = profileURL.path
         workingCert.expiration = metadata.expiration
         workingCert.teamName = metadata.teamName ?? workingCert.teamName
         workingCert.teamIdentifier = metadata.teamIdentifier ?? workingCert.teamIdentifier
@@ -965,12 +1017,15 @@ final class AppStore: ObservableObject {
             self.selectedCertID = workingCert.id
             self.saveAll()
         }
-        return workingCert
+        return (workingCert, profileURL)
     }
 
     private func reusableProvisioningProfile(for certificate: CertificateRecord, bundleIdentifier: String) -> URL? {
         let autoProfilesDirectory = certificate.p12URL.deletingLastPathComponent().appendingPathComponent("AutoProfiles", isDirectory: true)
-        var candidates = [certificate.provisionURL]
+        var candidates: [URL] = []
+        if let legacyProvision = certificate.provisionURL {
+            candidates.append(legacyProvision)
+        }
         if let autoProfiles = try? FileManager.default.contentsOfDirectory(
             at: autoProfilesDirectory,
             includingPropertiesForKeys: [.contentModificationDateKey],
@@ -1482,7 +1537,7 @@ struct CertificatesView: View {
                 Button {
                     Task { await store.pickCertificateFiles() }
                 } label: {
-                    Label(L10n.string("Choose .p12 and .mobileprovision"), systemImage: "person.badge.key")
+                    Label(L10n.string("Choose .p12"), systemImage: "person.badge.key")
                 }
                 .buttonStyle(.borderedProminent)
 
@@ -1517,10 +1572,8 @@ struct CertificatesView: View {
                     InfoGrid(items: [
                         ("Default", cert.isDefault ? L10n.string("Yes") : L10n.string("No")),
                         ("Team", cert.teamName ?? L10n.string("Unknown")),
-                        ("App ID", cert.appIDName ?? L10n.string("Unknown")),
                         ("Expiration", cert.expiration?.formatted(date: .abbreviated, time: .omitted) ?? L10n.string("Unknown")),
-                        ("P12", cert.p12Path),
-                        ("Provision", cert.provisionPath)
+                        ("P12", cert.p12Path)
                     ])
                     HStack {
                         Button {
@@ -1619,6 +1672,17 @@ struct SigningView: View {
                 .onChange(of: store.options) { _, _ in store.saveAll() }
 
                 OptionSection(title: "Files") {
+                    HStack {
+                        Text(store.selectedProvisionURL()?.path ?? L10n.string("No provisioning profile"))
+                            .lineLimit(1)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            store.pickProvisioningProfile()
+                        } label: {
+                            Label(L10n.string("Provisioning Profile"), systemImage: "doc.badge.gearshape")
+                        }
+                    }
                     HStack {
                         Text(store.options.entitlementsPath.isEmpty ? L10n.string("No entitlements file") : store.options.entitlementsPath)
                             .lineLimit(1)
@@ -2327,7 +2391,7 @@ final class IPAService: @unchecked Sendable {
         )
     }
 
-    func sign(app: LibraryApp, certificate: CertificateRecord?, options: SigningOptions, storage: FeatherStorage, progress: @escaping @Sendable (String) -> Void) async throws -> LibraryApp {
+    func sign(app: LibraryApp, certificate: CertificateRecord?, provisionURL: URL?, options: SigningOptions, storage: FeatherStorage, progress: @escaping @Sendable (String) -> Void) async throws -> LibraryApp {
         guard app.kind == .imported else {
             throw FeatherError.message("Only imported apps can be signed.")
         }
@@ -2358,8 +2422,11 @@ final class IPAService: @unchecked Sendable {
             guard let certificate else {
                 throw FeatherError.message("Missing certificate.")
             }
+            guard let provisionURL else {
+                throw FeatherError.message(L10n.string("Missing provisioning profile."))
+            }
             progress("Signing with Zsign...")
-            try signWithProfiles(appURL: appURL, certificate: certificate, options: options)
+            try signWithProfiles(appURL: appURL, certificate: certificate, provisionURL: provisionURL, options: options)
         }
 
         let id = UUID()
@@ -2531,15 +2598,15 @@ final class IPAService: @unchecked Sendable {
         }
     }
 
-    private func signWithProfiles(appURL: URL, certificate: CertificateRecord, options: SigningOptions) throws {
-        let profiles = try provisioningProfiles(near: certificate.provisionURL)
+    private func signWithProfiles(appURL: URL, certificate: CertificateRecord, provisionURL: URL, options: SigningOptions) throws {
+        let profiles = try provisioningProfiles(near: provisionURL)
         let extensionProfiles = try extensionProvisionProfiles(appURL: appURL, profiles: profiles)
         if extensionProfiles.isEmpty {
-            try zsign(appURL: appURL, provisionURL: certificate.provisionURL, certificate: certificate, options: options)
+            try zsign(appURL: appURL, provisionURL: provisionURL, certificate: certificate, options: options)
             return
         }
 
-        try zsign(appURL: appURL, provisionURL: certificate.provisionURL, certificate: certificate, options: options)
+        try zsign(appURL: appURL, provisionURL: provisionURL, certificate: certificate, options: options)
         for appex in try fileManager.recursiveFiles(at: appURL).filter({ $0.pathExtension == "appex" }) {
             guard let bundleID = Bundle(path: appex.path)?.bundleIdentifier,
                   let profile = extensionProfiles[bundleID] else {
@@ -2549,7 +2616,7 @@ final class IPAService: @unchecked Sendable {
         }
         setenv("ZSIGN_SKIP_NESTED_BUNDLES", "1", 1)
         defer { unsetenv("ZSIGN_SKIP_NESTED_BUNDLES") }
-        try zsign(appURL: appURL, provisionURL: certificate.provisionURL, certificate: certificate, options: options)
+        try zsign(appURL: appURL, provisionURL: provisionURL, certificate: certificate, options: options)
     }
 
     private func zsign(appURL: URL, provisionURL: URL, certificate: CertificateRecord, options: SigningOptions) throws {
@@ -2712,32 +2779,36 @@ struct ProvisionMetadata {
     var appIDName: String?
 }
 
+struct P12Metadata {
+    var commonName: String?
+    var organization: String?
+    var organizationalUnit: String?
+    var expiration: Date?
+    var serialNumber: String?
+}
+
 enum CertificateService {
-    static func importCertificate(p12: URL, provision: URL, password: String, storage: FeatherStorage) throws -> CertificateRecord {
+    static func importCertificate(p12: URL, password: String, storage: FeatherStorage) throws -> CertificateRecord {
         let id = UUID()
         let destination = storage.certificatesDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         let p12Target = destination.appendingPathComponent("cert.p12")
-        let provisionTarget = destination.appendingPathComponent("profile.mobileprovision")
         try FileManager.default.copyItem(at: p12, to: p12Target)
-        try FileManager.default.copyItem(at: provision, to: provisionTarget)
-        try copySiblingProvisioningProfiles(of: provision, into: destination)
 
-        let metadata = parseProvision(provisionTarget)
-        let serialNumber = try? p12CertificateSerialNumber(p12: p12Target, password: password)
-        let nickname = metadata.teamName ?? metadata.appIDName ?? p12.deletingPathExtension().lastPathComponent
+        let metadata = try p12Metadata(p12: p12Target, password: password)
+        let nickname = metadata.commonName ?? metadata.organization ?? p12.deletingPathExtension().lastPathComponent
         return CertificateRecord(
             id: id,
             nickname: nickname,
             p12Path: p12Target.path,
-            provisionPath: provisionTarget.path,
+            provisionPath: nil,
             password: password,
             expiration: metadata.expiration,
-            teamName: metadata.teamName,
-            teamIdentifier: metadata.teamIdentifier,
-            appIdentifierPrefix: metadata.appIdentifierPrefix,
-            appIDName: metadata.appIDName,
-            p12SerialNumber: serialNumber,
+            teamName: metadata.organization,
+            teamIdentifier: metadata.organizationalUnit,
+            appIdentifierPrefix: metadata.organizationalUnit,
+            appIDName: nil,
+            p12SerialNumber: metadata.serialNumber,
             importedAt: Date(),
             isDefault: false
         )
@@ -2777,7 +2848,38 @@ enum CertificateService {
         }
     }
 
+    static func developerCertificateSerials(in provision: URL) throws -> Set<String> {
+        let result = try ProcessRunner.capture("/usr/bin/security", ["cms", "-D", "-i", provision.path])
+        guard let data = result.data(using: .utf8),
+              let plist = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let certificates = plist["DeveloperCertificates"] as? [Data] else {
+            return []
+        }
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent("FeatherMac-ProvisionCerts-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temp) }
+        var serials = Set<String>()
+        for (index, certData) in certificates.enumerated() {
+            let certURL = temp.appendingPathComponent("cert-\(index).cer")
+            try certData.write(to: certURL)
+            let output = try ProcessRunner.capture("/usr/bin/openssl", ["x509", "-inform", "DER", "-in", certURL.path, "-serial", "-noout"])
+            if let serial = output
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "serial=", with: "")
+                .replacingOccurrences(of: ":", with: "")
+                .uppercased()
+                .nonEmpty {
+                serials.insert(serial)
+            }
+        }
+        return serials
+    }
+
     static func p12CertificateSerialNumber(p12: URL, password: String) throws -> String? {
+        try p12Metadata(p12: p12, password: password).serialNumber
+    }
+
+    static func p12Metadata(p12: URL, password: String) throws -> P12Metadata {
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("FeatherMac-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temp) }
@@ -2790,23 +2892,42 @@ enum CertificateService {
             "-passin", "pass:\(password)",
             "-out", pem.path
         ])
+        let subject = try ProcessRunner.capture("/usr/bin/openssl", ["x509", "-in", pem.path, "-subject", "-nameopt", "RFC2253", "-noout"])
+        let endDate = try ProcessRunner.capture("/usr/bin/openssl", ["x509", "-in", pem.path, "-enddate", "-noout"])
         let serial = try ProcessRunner.capture("/usr/bin/openssl", ["x509", "-in", pem.path, "-serial", "-noout"])
-        return serial
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "serial=", with: "")
             .replacingOccurrences(of: ":", with: "")
             .uppercased()
-            .nonEmpty
+        let fields = certificateSubjectFields(subject)
+        let expiration = certificateExpirationDate(endDate)
+        return P12Metadata(
+            commonName: fields["CN"],
+            organization: fields["O"],
+            organizationalUnit: fields["OU"],
+            expiration: expiration,
+            serialNumber: serial.nonEmpty
+        )
     }
 
-    private static func copySiblingProvisioningProfiles(of provision: URL, into destination: URL) throws {
-        let sourceDirectory = provision.deletingLastPathComponent()
-        let profiles = try FileManager.default.contentsOfDirectory(at: sourceDirectory, includingPropertiesForKeys: nil)
-            .filter { ["mobileprovision", "provisionprofile"].contains($0.pathExtension.lowercased()) }
-        for profile in profiles where profile.standardizedFileURL != provision.standardizedFileURL {
-            let target = destination.appendingPathComponent(profile.lastPathComponent)
-            try FileManager.default.copyItemReplacing(from: profile, to: target)
+    private static func certificateSubjectFields(_ subject: String) -> [String: String] {
+        let raw = subject.replacingOccurrences(of: "subject=", with: "").trimmed
+        var result: [String: String] = [:]
+        for part in raw.split(separator: ",") {
+            let pieces = part.split(separator: "=", maxSplits: 1).map { String($0).trimmed }
+            guard pieces.count == 2 else { continue }
+            result[pieces[0]] = pieces[1]
         }
+        return result
+    }
+
+    private static func certificateExpirationDate(_ value: String) -> Date? {
+        let raw = value.replacingOccurrences(of: "notAfter=", with: "").trimmed
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "MMM d HH:mm:ss yyyy zzz"
+        return formatter.date(from: raw)
     }
 }
 

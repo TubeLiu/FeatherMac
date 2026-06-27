@@ -35,6 +35,7 @@
 "Import Certificate" = "导入证书";
 "P12 password" = "P12 密码";
 "Choose .p12 and .mobileprovision" = "选择 .p12 和 .mobileprovision";
+"Choose .p12" = "选择 .p12";
 "No certificate imported" = "尚未导入证书";
 "Default" = "默认";
 "Team" = "团队";
@@ -54,6 +55,14 @@
 "Appearance" = "外观";
 "Minimum iOS" = "最低 iOS";
 "Files" = "文件";
+"No provisioning profile" = "未选择描述文件";
+"Provisioning Profile" = "描述文件";
+"Choose a provisioning profile before signing." = "请先选择描述文件再签名。";
+"Selected provisioning profile %@." = "已选择描述文件 %@。";
+"Provisioning profile file is missing." = "描述文件不存在。";
+"Provisioning profile Bundle ID %@ does not match %@." = "描述文件 Bundle ID %@ 与 %@ 不匹配。";
+"Provisioning profile team %@ does not match certificate team %@." = "描述文件团队 %@ 与证书团队 %@ 不匹配。";
+"Provisioning profile does not include the selected certificate." = "描述文件不包含当前选择的证书。";
 "No entitlements file" = "未选择 entitlements 文件";
 "No replacement icon" = "未选择替换图标";
 "Entitlements" = "Entitlements";
@@ -143,6 +152,7 @@
 "Only imported apps can be signed." = "只能签名已导入的应用。";
 "Imported Payload folder is missing." = "已导入应用的 Payload 文件夹缺失。";
 "Missing certificate." = "缺少证书。";
+"Missing provisioning profile." = "缺少描述文件。";
 "Zsign failed." = "Zsign 失败。";
 "IPA does not contain a Payload folder." = "IPA 中没有 Payload 文件夹。";
 "Payload does not contain an .app bundle." = "Payload 中没有 .app 包。";
