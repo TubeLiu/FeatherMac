@@ -13,7 +13,37 @@ enum FeatherMacMain {
         if FeatherMacCLI.runIfRequested() {
             return
         }
+        SidebarLayoutRecovery.discardImplausibleSplitState()
         FeatherMacApp.main()
+    }
+}
+
+/// AppKit 把分栏宽度存进 UserDefaults 的 "NSSplitView Subview Frames …" 项里。
+/// 这份数据一旦写坏（实测出现过侧边栏 2885pt），布局会把详情栏挤出窗口、侧边栏跑到负坐标，
+/// 界面看上去整个是空的——而用户完全没有办法自行恢复，因为菜单和导航都点不到。
+///
+/// 启动时校验一次：宽度超出侧边栏声明的范围就丢弃该项，让 AppKit 用默认值重建。
+/// 代价只是用户手动拖过的侧边栏宽度会回到默认，比界面不可用好得多。
+enum SidebarLayoutRecovery {
+    private static let maximumReasonableSidebarWidth: Double = 400
+
+    static func discardImplausibleSplitState() {
+        let defaults = UserDefaults.standard
+        for (key, value) in defaults.dictionaryRepresentation()
+        where key.hasPrefix("NSSplitView Subview Frames") {
+            guard let frames = value as? [String],
+                  let first = frames.first,
+                  let width = sidebarWidth(from: first),
+                  width > maximumReasonableSidebarWidth else { continue }
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    /// 每项形如 "0.000000, 0.000000, 218.000000, 772.000000, NO, NO"，第三个字段是宽度。
+    private static func sidebarWidth(from frame: String) -> Double? {
+        let fields = frame.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard fields.count >= 3 else { return nil }
+        return Double(fields[2])
     }
 }
 
@@ -1554,7 +1584,10 @@ struct ContentView: View {
                 Label(L10n.string(pane.rawValue), systemImage: pane.icon)
                     .tag(pane)
             }
-            .navigationSplitViewColumnWidth(min: 190, ideal: 210)
+            // 必须给上限：AppKit 会把分栏宽度存进 NSSplitView 的自动保存项，
+            // 只设 min 的话，一个写坏的宽度（实测见过 2885）会把详情栏整个挤出窗口，
+            // 侧边栏也跟着跑到负坐标——界面看起来是空的，而用户没有任何办法恢复。
+            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 320)
         } detail: {
             VStack(spacing: 0) {
                 toolbar
