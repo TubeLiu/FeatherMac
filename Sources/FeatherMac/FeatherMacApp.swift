@@ -140,7 +140,12 @@ enum DocumentationScreenshotRunner {
             window.center()
             window.makeKeyAndOrderFront(nil)
 
-            for (pane, filename) in [(Pane.library, "library.png"), (.automation, "automation.png"), (.signing, "signing.png")] {
+            for (pane, filename) in [
+                (Pane.library, "library.png"),
+                (.certificates, "certificates.png"),
+                (.automation, "automation.png"),
+                (.signing, "signing.png")
+            ] {
                 store.pane = pane
                 try await Task.sleep(nanoseconds: 500_000_000)
                 try captureWindow(window, to: outputDirectory.appendingPathComponent(filename))
@@ -191,10 +196,12 @@ enum DocumentationScreenshotRunner {
             )
         ]
         store.selectedAppID = signedID
+        let expiredCertificateID = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+        let demoSerial = "2F1C9A47B3E05D68"
         store.certificates = [
             CertificateRecord(
                 id: certificateID,
-                nickname: "Apple Development Demo",
+                nickname: "iOS Development: Example Team",
                 p12Path: "~/Certificates/demo.p12",
                 provisionPath: "~/Profiles/demo.mobileprovision",
                 password: "",
@@ -203,12 +210,31 @@ enum DocumentationScreenshotRunner {
                 teamIdentifier: "ABCDE12345",
                 appIdentifierPrefix: "ABCDE12345",
                 appIDName: "FeatherMac Demo",
-                p12SerialNumber: "DEMO-SERIAL",
+                p12SerialNumber: demoSerial,
                 importedAt: Date(),
                 isDefault: true
+            ),
+            // 留一张过期的：证书页的过期警告与"一键续期"是这一版的重点，
+            // 只有列表里真有过期证书时才截得到。
+            CertificateRecord(
+                id: expiredCertificateID,
+                nickname: "iPhone Developer: Example Team",
+                p12Path: "~/Certificates/previous.p12",
+                password: "",
+                expiration: Calendar.current.date(byAdding: .month, value: -2, to: Date()),
+                teamName: "Example Team",
+                teamIdentifier: "ABCDE12345",
+                p12SerialNumber: "9B2E4471C0DA5F13",
+                importedAt: Date(),
+                isDefault: false
             )
         ]
         store.selectedCertID = certificateID
+        // 凭据已校验通过的状态：证书页不出横幅、"创建证书"可点，
+        // API 密钥列表显示"可用"徽章与团队 ID。
+        store.credentialState = .ready
+        store.credentialTeamIdentifier = "ABCDE12345"
+        store.portalSerialNumbers = [demoSerial]
         store.options.appName = "Feather Mac Demo"
         store.options.appVersion = "2.8.2"
         store.options.appIdentifier = "com.example.feathermac.feather"
@@ -222,7 +248,7 @@ enum DocumentationScreenshotRunner {
             issuerID: "00000000-0000-0000-0000-000000000000",
             keyID: "DEMO123456",
             privateKeyPath: "~/Keys/AuthKey_DEMO123456.p8",
-            teamIdentifier: "A1B2C3D4E5"
+            teamIdentifier: "ABCDE12345"
         )
         store.appStoreConnect = AppStoreConnectSettings(
             keys: [demoKey],
@@ -233,6 +259,7 @@ enum DocumentationScreenshotRunner {
         store.automation = AutomationPipeline(
             appID: importedID,
             certificateID: certificateID,
+            appName: "Feather",
             iconPath: "~/Pictures/demo-icon.png",
             installAfterSigning: true,
             lastSignedAppID: signedID,

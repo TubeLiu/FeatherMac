@@ -275,6 +275,8 @@ extension AppStore {
     // MARK: 门户状态
 
     func refreshPortalStatus() async {
+        // 文档截图跑的是铺好的演示数据，真去调 API 必然失败并把状态清成"未校验"。
+        guard ProcessInfo.processInfo.environment["FEATHERMAC_SCREENSHOT_DIR"] == nil else { return }
         guard credentialState.canCreateCertificate else {
             portalSerialNumbers = nil
             return

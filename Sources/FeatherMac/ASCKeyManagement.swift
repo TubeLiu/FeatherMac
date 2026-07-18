@@ -236,8 +236,10 @@ private struct ASCKeyRow: View {
         if let issuer = key.issuerID.nonEmpty {
             parts.append(L10n.format("Issuer %@", String(issuer.prefix(8)) + "…"))
         }
-        if !FileManager.default.fileExists(atPath: key.privateKeyPath) {
-            // 托管副本被外部删掉了，早点说，别等到签 JWT 时才炸。
+        // 托管副本被外部删掉了，早点说，别等到签 JWT 时才炸。
+        // 文档截图用的是演示路径，本来就不存在，不必显示这条。
+        let capturingScreenshots = ProcessInfo.processInfo.environment["FEATHERMAC_SCREENSHOT_DIR"] != nil
+        if !capturingScreenshots && !FileManager.default.fileExists(atPath: key.privateKeyPath) {
             parts.append(L10n.string("key file missing"))
         }
         return parts.joined(separator: " · ")
