@@ -8,6 +8,15 @@ import UniformTypeIdentifiers
 import ZsignSwift
 
 @main
+enum FeatherMacMain {
+    static func main() {
+        if FeatherMacCLI.runIfRequested() {
+            return
+        }
+        FeatherMacApp.main()
+    }
+}
+
 struct FeatherMacApp: App {
     @StateObject private var store = AppStore()
     @AppStorage("FeatherMac.language") private var language = AppLanguage.system.rawValue
@@ -36,6 +45,80 @@ struct FeatherMacApp: App {
                 .keyboardShortcut("n", modifiers: [.command])
             }
         }
+    }
+}
+
+@MainActor
+enum FeatherMacCLI {
+    /// 命令行模式：`FeatherMac --workflow [--app-id <uuid>] [--app-name <name>] [--icon <path>] [--no-install]`
+    /// 返回 true 表示已按命令行模式处理（进程会驻留到任务结束后自行退出）。
+    static func runIfRequested() -> Bool {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        guard arguments.contains("--workflow") else { return false }
+
+        let store = AppStore()
+        Task { @MainActor in
+            let code = await run(store: store, arguments: arguments)
+            exit(code)
+        }
+        dispatchMain()
+    }
+
+    private static func run(store: AppStore, arguments: [String]) async -> Int32 {
+        do {
+            try store.storage.prepare()
+            store.library = try store.storage.loadLibrary()
+            store.certificates = try store.storage.loadCertificates()
+            store.options = try store.storage.loadOptions()
+            store.appStoreConnect = try store.storage.loadAppStoreConnectSettings()
+            store.automation = try store.storage.loadAutomationPipeline()
+
+            if let appID = value(after: "--app-id", in: arguments), let uuid = UUID(uuidString: appID) {
+                store.automation.appID = uuid
+            }
+            if store.automation.appID == nil {
+                store.automation.appID = store.library.first(where: { $0.kind == .imported })?.id
+            }
+            if store.automation.certificateID == nil {
+                store.automation.certificateID = store.certificates.first(where: \.isDefault)?.id ?? store.certificates.first?.id
+            }
+            if let appName = value(after: "--app-name", in: arguments)?.trimmed.nonEmpty {
+                store.automation.appName = appName
+            }
+            if let iconPath = value(after: "--icon", in: arguments)?.trimmed.nonEmpty {
+                store.automation.iconPath = iconPath
+            }
+            if arguments.contains("--no-install") {
+                store.automation.installAfterSigning = false
+            }
+            store.saveAll()
+
+            print("FeatherMac CLI: running workflow...")
+            await store.runAutomationPipeline()
+
+            for entry in store.logs.reversed() {
+                print("[\(entry.level.rawValue)] \(entry.message)")
+            }
+
+            let failed = store.logs.contains { $0.level == .error }
+            let signed = store.automation.completedSteps.contains(.sign) && store.automation.lastSignedAppID != nil
+            let installExpected = store.automation.installAfterSigning
+            let installed = !installExpected || store.automation.completedSteps.contains(.install)
+            if failed || !signed || !installed {
+                fputs("FeatherMac CLI: workflow failed.\n", stderr)
+                return 1
+            }
+            print("FeatherMac CLI: workflow completed.")
+            return 0
+        } catch {
+            fputs("FeatherMac CLI error: \(error)\n", stderr)
+            return 1
+        }
+    }
+
+    private static func value(after flag: String, in arguments: [String]) -> String? {
+        guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else { return nil }
+        return arguments[index + 1]
     }
 }
 
@@ -135,10 +218,15 @@ enum DocumentationScreenshotRunner {
         store.options.iPadFullscreen = true
         store.options.supportLiquidGlass = true
         store.options.installAfterSigning = true
-        store.appStoreConnect = AppStoreConnectSettings(
+        let demoKey = ASCKeyRecord(
             issuerID: "00000000-0000-0000-0000-000000000000",
             keyID: "DEMO123456",
             privateKeyPath: "~/Keys/AuthKey_DEMO123456.p8",
+            teamIdentifier: "A1B2C3D4E5"
+        )
+        store.appStoreConnect = AppStoreConnectSettings(
+            keys: [demoKey],
+            selectedKeyID: demoKey.id,
             bundleIdentifierPrefix: "com.example.feathermac",
             registerConnectedDevice: true
         )
@@ -333,12 +421,86 @@ struct CertificateRecord: Identifiable, Codable, Hashable {
     var provisionURL: URL? { provisionPath.map { URL(fileURLWithPath: $0) } }
 }
 
+/// 一把 App Store Connect API 密钥。私钥文件由应用托管（复制进数据目录，0600），
+/// `privateKeyPath` 指向的始终是这份副本，不是用户当初选的原始文件。
+struct ASCKeyRecord: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var issuerID: String
+    var keyID: String
+    var privateKeyPath: String
+    /// 校验成功后缓存的团队 ID，用于在列表里区分多个账号。
+    var teamIdentifier: String?
+    var addedAt = Date()
+
+    var privateKeyURL: URL { URL(fileURLWithPath: privateKeyPath) }
+
+    var displayName: String {
+        [keyID, teamIdentifier].compactMap(\.self).filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+}
+
 struct AppStoreConnectSettings: Codable, Equatable {
-    var issuerID = ""
-    var keyID = ""
-    var privateKeyPath = ""
+    var keys: [ASCKeyRecord] = []
+    var selectedKeyID: UUID?
     var bundleIdentifierPrefix = ""
     var registerConnectedDevice = true
+
+    var activeKey: ASCKeyRecord? {
+        keys.first { $0.id == selectedKeyID } ?? keys.first
+    }
+
+    // 只读兼容层：客户端签 JWT、服务层校验、导出配置都还按这三项读，保持不变。
+    var issuerID: String { activeKey?.issuerID ?? "" }
+    var keyID: String { activeKey?.keyID ?? "" }
+    var privateKeyPath: String { activeKey?.privateKeyPath ?? "" }
+}
+
+extension AppStoreConnectSettings {
+    private enum CodingKeys: String, CodingKey {
+        case keys, selectedKeyID, bundleIdentifierPrefix, registerConnectedDevice
+        // 旧版本平铺的三项，只用于读取迁移。
+        case issuerID, keyID, privateKeyPath
+    }
+
+    /// 兼容旧版 appstoreconnect.json：三项平铺的单份配置迁移成列表里的第一把密钥。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        var keys = try container.decodeIfPresent([ASCKeyRecord].self, forKey: .keys) ?? []
+        var selected = try container.decodeIfPresent(UUID.self, forKey: .selectedKeyID)
+
+        if keys.isEmpty {
+            let legacyIssuer = (try container.decodeIfPresent(String.self, forKey: .issuerID) ?? "").trimmed
+            let legacyKeyID = (try container.decodeIfPresent(String.self, forKey: .keyID) ?? "").trimmed
+            let legacyPath = (try container.decodeIfPresent(String.self, forKey: .privateKeyPath) ?? "").trimmed
+            if !legacyIssuer.isEmpty || !legacyKeyID.isEmpty || !legacyPath.isEmpty {
+                let migrated = ASCKeyRecord(
+                    issuerID: legacyIssuer,
+                    keyID: legacyKeyID,
+                    privateKeyPath: legacyPath
+                )
+                keys = [migrated]
+                selected = migrated.id
+            }
+        }
+        if selected == nil || !keys.contains(where: { $0.id == selected }) {
+            selected = keys.first?.id
+        }
+
+        self.init(
+            keys: keys,
+            selectedKeyID: selected,
+            bundleIdentifierPrefix: try container.decodeIfPresent(String.self, forKey: .bundleIdentifierPrefix) ?? "",
+            registerConnectedDevice: try container.decodeIfPresent(Bool.self, forKey: .registerConnectedDevice) ?? true
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(keys, forKey: .keys)
+        try container.encodeIfPresent(selectedKeyID, forKey: .selectedKeyID)
+        try container.encode(bundleIdentifierPrefix, forKey: .bundleIdentifierPrefix)
+        try container.encode(registerConnectedDevice, forKey: .registerConnectedDevice)
+    }
 }
 
 struct AutomationPipeline: Codable, Equatable {
@@ -354,6 +516,7 @@ struct AutomationPipeline: Codable, Equatable {
 
     var appID: UUID?
     var certificateID: UUID?
+    var appName = ""
     var iconPath = ""
     var installAfterSigning = true
     var lastSignedAppID: UUID?
@@ -364,6 +527,23 @@ struct AutomationPipeline: Codable, Equatable {
         activeStep = nil
         completedSteps = []
         lastSignedAppID = nil
+    }
+}
+
+extension AutomationPipeline {
+    /// 兼容旧版本持久化的 automation.json（缺少新增字段如 appName 时按默认值解码）。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            appID: try container.decodeIfPresent(UUID.self, forKey: .appID),
+            certificateID: try container.decodeIfPresent(UUID.self, forKey: .certificateID),
+            appName: try container.decodeIfPresent(String.self, forKey: .appName) ?? "",
+            iconPath: try container.decodeIfPresent(String.self, forKey: .iconPath) ?? "",
+            installAfterSigning: try container.decodeIfPresent(Bool.self, forKey: .installAfterSigning) ?? true,
+            lastSignedAppID: try container.decodeIfPresent(UUID.self, forKey: .lastSignedAppID),
+            activeStep: try container.decodeIfPresent(Step.self, forKey: .activeStep),
+            completedSteps: try container.decodeIfPresent([Step].self, forKey: .completedSteps) ?? []
+        )
     }
 }
 
@@ -469,6 +649,21 @@ final class AppStore: ObservableObject {
     @Published var certificatePasswordDraft = ""
     @Published var showAddSource = false
 
+    // MARK: ASC 凭据与证书申请
+    @Published var showASCWizard = false
+    @Published var credentialState: ASCCredentialState = .unconfigured
+    @Published var credentialTeamIdentifier: String?
+    @Published var newCertificateType: DeveloperCertificateType = .iosDevelopment
+    @Published var newCertificatePasswordDraft = ""
+    /// 创建成功后一次性展示的密码；用户关掉即清空。
+    @Published var createdCertificateReveal: CreatedCertificateReveal?
+    /// 门户证书序列号集合，用于在详情区显示"与账号一致 / 门户中已不存在"。
+    @Published var portalSerialNumbers: Set<String>?
+    /// 产生当前校验结论的那份凭据的指纹，凭据变了就作废。
+    @Published var verifiedCredentialFingerprint: String?
+    /// 用户在自动配置页选了 .p8 但凭据不全时，暂存路径交给向导接着走。
+    @Published var pendingKeyImportPath: String?
+
     let storage = FeatherStorage()
     let sourceService = SourceService()
     let ipaService = IPAService()
@@ -494,6 +689,11 @@ final class AppStore: ObservableObject {
             options = try storage.loadOptions()
             appStoreConnect = try storage.loadAppStoreConnectSettings()
             automation = try storage.loadAutomationPipeline()
+            refreshCredentialState()
+            // 旧格式解码时会给迁移出来的密钥现分配 UUID，不落盘的话每次启动都换一个 id。
+            // 立刻按新格式写回，规范化一次即可（与上面 sanitizedSources 的做法一致）。
+            try storage.saveAppStoreConnectSettings(appStoreConnect)
+            pruneOrphanedASCKeys()
             let sanitizedSources = SourceService.sanitizedSources(sources)
             if sanitizedSources != sources {
                 sources = sanitizedSources
@@ -846,12 +1046,6 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func pickAppStoreConnectKey() {
-        guard let p8 = UTType(filenameExtension: "p8"),
-              let url = FilePicker.open(types: [p8]) else { return }
-        appStoreConnect.privateKeyPath = url.path
-        saveAll()
-    }
 
     func applySuggestedBundleIdentifier() {
         guard let app = selectedApp else {
@@ -895,10 +1089,13 @@ final class AppStore: ObservableObject {
                 )
             }
             let profile = try await self.developerService.createDevelopmentProfile(
-                appName: app.name,
+                appName: self.options.appName.trimmed.nonEmpty ?? app.name,
                 bundleIdentifier: suggestedIdentifier,
                 certificate: workingCert,
-                settings: configured
+                settings: configured,
+                progress: { message in
+                    Task { @MainActor in self.log(.info, message) }
+                }
             )
             let profileDirectory = workingCert.p12URL.deletingLastPathComponent().appendingPathComponent("AutoProfiles", isDirectory: true)
             try FileManager.default.createDirectory(at: profileDirectory, withIntermediateDirectories: true)
@@ -947,12 +1144,13 @@ final class AppStore: ObservableObject {
             log(.error, "Import a certificate or switch signing mode to Modify only.")
             return
         }
+        let displayName = await MainActor.run { self.automation.appName.trimmed.nonEmpty ?? app.name }
         await runBusy("Running workflow...") {
             await MainActor.run {
                 self.automation.resetRun()
                 self.automation.activeStep = .selectApp
                 self.saveAll()
-                self.log(.info, "Workflow selected \(app.name).")
+                self.log(.info, "Workflow selected \(app.name) -> \(displayName).")
             }
             await self.finishAutomationStep(.selectApp)
 
@@ -963,9 +1161,9 @@ final class AppStore: ObservableObject {
                 certificate: cert,
                 configuredPrefix: configured.bundleIdentifierPrefix
             )
-            let (updatedCert, profileURL) = try await self.createProvisioningProfile(app: app, certificate: cert, bundleIdentifier: bundleID, settings: configured)
+            let (updatedCert, profileURL) = try await self.createProvisioningProfile(app: app, displayName: displayName, certificate: cert, bundleIdentifier: bundleID, settings: configured)
             await MainActor.run {
-                self.options.appName = app.name
+                self.options.appName = displayName
                 self.options.appIdentifier = bundleID
                 self.options.provisionPath = profileURL.path
                 self.options.signingMode = .certificate
@@ -1036,7 +1234,7 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func createProvisioningProfile(app: LibraryApp, certificate: CertificateRecord, bundleIdentifier: String, settings: AppStoreConnectSettings) async throws -> (CertificateRecord, URL) {
+    private func createProvisioningProfile(app: LibraryApp, displayName: String, certificate: CertificateRecord, bundleIdentifier: String, settings: AppStoreConnectSettings) async throws -> (CertificateRecord, URL) {
         var workingCert = certificate
         if workingCert.p12SerialNumber?.isEmpty != false {
             workingCert.p12SerialNumber = try CertificateService.p12CertificateSerialNumber(
@@ -1056,10 +1254,13 @@ final class AppStore: ObservableObject {
             await MainActor.run { self.log(.success, "Reused provisioning profile \(profileName).") }
         } else {
             let profile = try await developerService.createDevelopmentProfile(
-                appName: app.name,
+                appName: displayName,
                 bundleIdentifier: bundleIdentifier,
                 certificate: workingCert,
-                settings: settings
+                settings: settings,
+                progress: { message in
+                    Task { @MainActor in self.log(.info, message) }
+                }
             )
             try profile.data.write(to: profileURL, options: .atomic)
             profileName = profile.name
@@ -1109,6 +1310,11 @@ final class AppStore: ObservableObject {
     }
 
     func exportAppStoreConnectConfig() {
+        guard Confirm.warn(
+            title: "This file contains your API private key",
+            message: "The exported file embeds your App Store Connect .p8 private key in plain text. Anyone who obtains it can create and revoke certificates on your account. Store it somewhere safe and do not share it.",
+            confirmTitle: "Export Anyway"
+        ) else { return }
         guard let export = makeAppStoreConnectExport() else { return }
         guard let destination = FilePicker.save(defaultName: "FeatherMac-AppStoreConnect.feathermacconfig") else { return }
         do {
@@ -1132,6 +1338,11 @@ final class AppStore: ObservableObject {
     }
 
     func syncAppStoreConnectConfigToICloud() {
+        guard Confirm.warn(
+            title: "Upload your API private key to iCloud Drive?",
+            message: "Your App Store Connect .p8 private key will be written to iCloud Drive in plain text and synced to every device signed in to your Apple ID. Only continue if you trust that account.",
+            confirmTitle: "Upload to iCloud"
+        ) else { return }
         guard let export = makeAppStoreConnectExport() else { return }
         do {
             let destination = try storage.iCloudConfigURL()
@@ -1185,19 +1396,19 @@ final class AppStore: ObservableObject {
     private func importAppStoreConnectExport(from url: URL) throws {
         let data = try Data(contentsOf: url)
         let imported = try JSONDecoder().decode(AppStoreConnectExport.self, from: data)
-        let keyDirectory = storage.root.appendingPathComponent("AppStoreConnect", isDirectory: true)
-        try FileManager.default.createDirectory(at: keyDirectory, withIntermediateDirectories: true)
+        // 先把 PEM 落到临时文件，再走统一的导入路径，托管与去重逻辑只有一份。
+        let staging = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FeatherMac-ImportedKey-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: staging) }
         let keyID = imported.keyID.trimmed.nonEmpty ?? "Imported"
-        let keyURL = keyDirectory.appendingPathComponent("AuthKey_\(keyID).p8")
-        try imported.privateKeyPEM.write(to: keyURL, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyURL.path)
-        appStoreConnect = AppStoreConnectSettings(
-            issuerID: imported.issuerID,
-            keyID: imported.keyID,
-            privateKeyPath: keyURL.path,
-            bundleIdentifierPrefix: imported.bundleIdentifierPrefix,
-            registerConnectedDevice: imported.registerConnectedDevice
-        )
+        let staged = staging.appendingPathComponent("AuthKey_\(keyID).p8")
+        try imported.privateKeyPEM.write(to: staged, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: staged.path)
+
+        appStoreConnect.bundleIdentifierPrefix = imported.bundleIdentifierPrefix
+        appStoreConnect.registerConnectedDevice = imported.registerConnectedDevice
+        try importASCKey(from: staged, issuerID: imported.issuerID, keyID: keyID)
     }
 
     func pickInjectionFiles() {
@@ -1228,7 +1439,7 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func runBusy(_ text: String, operation: @escaping () async throws -> Void) async {
+    func runBusy(_ text: String, operation: @escaping () async throws -> Void) async {
         isBusy = true
         progressText = text
         do {
@@ -1276,6 +1487,13 @@ struct ContentView: View {
         }
         .sheet(isPresented: $store.showAddSource) {
             AddSourceSheet()
+        }
+        // 向导可以从证书页横幅和自动配置页两处打开，所以挂在顶层。
+        .sheet(isPresented: $store.showASCWizard) {
+            ASCSetupWizardView()
+        }
+        .sheet(item: $store.createdCertificateReveal) { reveal in
+            CreatedCertificateSheet(reveal: reveal)
         }
         .id(language)
         .environment(\.locale, AppLanguage(rawValue: language)?.locale ?? .autoupdatingCurrent)
@@ -1670,6 +1888,11 @@ struct CertificatesView: View {
     var body: some View {
         HSplitView {
             VStack(alignment: .leading, spacing: 12) {
+                // 未配置或校验失败时才出现；配置成功后自动消失，不做常驻绿条。
+                if !store.credentialState.canCreateCertificate {
+                    CredentialBanner()
+                }
+
                 Text(L10n.string("Import Certificate"))
                     .font(.headline)
                 SecureField(L10n.string("P12 password"), text: $store.certificatePasswordDraft)
@@ -1680,6 +1903,10 @@ struct CertificatesView: View {
                     Label(L10n.string("Choose .p12"), systemImage: "person.badge.key")
                 }
                 .buttonStyle(.borderedProminent)
+
+                Divider()
+
+                CreateCertificateSection()
 
                 Divider()
 
@@ -1706,35 +1933,231 @@ struct CertificatesView: View {
             .frame(minWidth: 380)
 
             if let cert = store.selectedCert {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text(cert.nickname)
-                        .font(.title2.weight(.semibold))
-                    InfoGrid(items: [
-                        ("Default", cert.isDefault ? L10n.string("Yes") : L10n.string("No")),
-                        ("Team", cert.teamName ?? L10n.string("Unknown")),
-                        ("Expiration", cert.expiration?.formatted(date: .abbreviated, time: .omitted) ?? L10n.string("Unknown")),
-                        ("P12", cert.p12Path)
-                    ])
-                    HStack {
-                        Button {
-                            store.setDefaultCertificate(cert)
-                        } label: {
-                            Label(L10n.string("Set Default"), systemImage: "checkmark.seal")
-                        }
-                        Button(role: .destructive) {
-                            store.deleteCertificate(cert)
-                        } label: {
-                            Label(L10n.string("Delete"), systemImage: "trash")
-                        }
-                    }
-                    Spacer()
-                    LogPanel()
-                }
-                .padding(18)
+                CertificateDetailView(cert: cert)
             } else {
                 EmptyState(title: L10n.string("No certificate imported"), systemImage: "person.text.rectangle")
             }
         }
+        .task {
+            await store.refreshPortalStatus()
+        }
+    }
+}
+
+/// 凭据状态横幅。禁用创建按钮时说明原因，不做点了才弹错。
+struct CredentialBanner: View {
+    @EnvironmentObject private var store: AppStore
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: isInvalid ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(isInvalid ? .red : .orange)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(L10n.string(isInvalid ? "App Store Connect credentials are not working" : "App Store Connect API is not configured"))
+                    .fontWeight(.semibold)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button(L10n.string(isInvalid ? "Reconfigure…" : "Set Up…")) {
+                store.showASCWizard = true
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(11)
+        .background((isInvalid ? Color.red : Color.orange).opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var isInvalid: Bool {
+        if case .invalid = store.credentialState { return true }
+        return false
+    }
+
+    private var detail: String {
+        if case .invalid(let message) = store.credentialState { return message }
+        return L10n.string("Configure it to create certificates and provisioning profiles inside FeatherMac.")
+    }
+}
+
+/// 功能 B：一键申请开发证书。
+struct CreateCertificateSection: View {
+    @EnvironmentObject private var store: AppStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text(L10n.string("Create Certificate"))
+                .font(.headline)
+
+            Picker(L10n.string("Certificate type"), selection: $store.newCertificateType) {
+                ForEach(DeveloperCertificateType.allCases) { type in
+                    Text(type.title).tag(type)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(L10n.string("P12 password")).font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    TextField(L10n.string("Generated automatically"), text: $store.newCertificatePasswordDraft)
+                        .textFieldStyle(.roundedBorder)
+                    Button(L10n.string("Generate")) { store.generateNewCertificatePassword() }
+                }
+            }
+
+            HStack(spacing: 9) {
+                Button {
+                    Task { await store.createCertificate() }
+                } label: {
+                    Label(L10n.string("Create Certificate"), systemImage: "plus.seal")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!store.credentialState.canCreateCertificate || store.isBusy)
+
+                if !store.credentialState.canCreateCertificate {
+                    Text(L10n.string("Configure the API first"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+struct CertificateDetailView: View {
+    @EnvironmentObject private var store: AppStore
+    var cert: CertificateRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(cert.nickname)
+                .font(.title2.weight(.semibold))
+
+            if isExpired {
+                Callout(
+                    systemImage: "exclamationmark.triangle",
+                    text: L10n.format(
+                        "This certificate expired on %@. Signing will fail. Create a replacement development certificate.",
+                        cert.expiration?.formatted(date: .abbreviated, time: .omitted) ?? ""
+                    ),
+                    tint: .red
+                )
+            }
+
+            InfoGrid(items: [
+                ("Default", cert.isDefault ? L10n.string("Yes") : L10n.string("No")),
+                ("Team", cert.teamName ?? L10n.string("Unknown")),
+                ("Expiration", cert.expiration?.formatted(date: .abbreviated, time: .omitted) ?? L10n.string("Unknown")),
+                ("Serial", cert.p12SerialNumber ?? L10n.string("Unknown")),
+                ("Account status", portalStatusText),
+                ("P12", cert.p12Path)
+            ])
+
+            HStack {
+                if isExpired {
+                    Button {
+                        Task { await store.renewCertificate(cert) }
+                    } label: {
+                        Label(L10n.string("Renew Now"), systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!store.credentialState.canCreateCertificate || store.isBusy)
+                }
+                Button {
+                    store.setDefaultCertificate(cert)
+                } label: {
+                    Label(L10n.string("Set Default"), systemImage: "checkmark.seal")
+                }
+                // 只有确认还在门户里的开发证书才给吊销入口。
+                if store.portalStatus(for: cert) == true {
+                    Button {
+                        Task { await store.revokePortalCertificate(matching: cert) }
+                    } label: {
+                        Label(L10n.string("Revoke in Portal…"), systemImage: "xmark.seal")
+                    }
+                    .disabled(store.isBusy)
+                }
+                Button(role: .destructive) {
+                    store.deleteCertificate(cert)
+                } label: {
+                    Label(L10n.string("Delete"), systemImage: "trash")
+                }
+            }
+
+            Spacer()
+            LogPanel()
+        }
+        .padding(18)
+    }
+
+    private var isExpired: Bool {
+        guard let expiration = cert.expiration else { return false }
+        return expiration < Date()
+    }
+
+    private var portalStatusText: String {
+        switch store.portalStatus(for: cert) {
+        case true?: L10n.string("Matches your account")
+        case false?: L10n.string("No longer in your account")
+        case nil: L10n.string("Not verified")
+        }
+    }
+}
+
+/// 创建成功后的一次性展示。文案如实说"应用会记住它"——密码确实还存在本地 JSON 里，
+/// 不能暗示别处再也拿不到（钥匙串存储另立项）。
+struct CreatedCertificateSheet: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+    var reveal: CreatedCertificateReveal
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Callout(
+                systemImage: "checkmark.seal.fill",
+                text: L10n.format(
+                    "%@ · serial %@ · valid until %@",
+                    reveal.nickname,
+                    reveal.serialNumber ?? L10n.string("Unknown"),
+                    reveal.expiration?.formatted(date: .abbreviated, time: .omitted) ?? L10n.string("Unknown")
+                ),
+                tint: .green
+            )
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text(L10n.string("P12 password")).font(.headline)
+                HStack {
+                    Text(reveal.password)
+                        .font(.system(.title3, design: .monospaced))
+                        .textSelection(.enabled)
+                    Spacer()
+                    Button(L10n.string("Copy")) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(reveal.password, forType: .string)
+                    }
+                }
+                .padding(10)
+                .background(.quinary, in: RoundedRectangle(cornerRadius: 8))
+                Text(L10n.string("Use this password to export the certificate or open it in other tools. FeatherMac remembers it, but this is the only time it is shown in full."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Spacer()
+                Button(L10n.string("Set as Default")) {
+                    if let cert = store.certificates.first(where: { $0.id == reveal.certificateID }) {
+                        store.setDefaultCertificate(cert)
+                    }
+                    dismiss()
+                }
+                Button(L10n.string("Done")) { dismiss() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
     }
 }
 
@@ -1979,9 +2402,16 @@ struct AutomationView: View {
                             Field("Bundle Prefix", text: $store.appStoreConnect.bundleIdentifierPrefix)
                             Toggle(L10n.string("Install after workflow"), isOn: $store.automation.installAfterSigning)
                         }
+                        GridRow {
+                            Field("App Name", text: $store.automation.appName)
+                        }
                     }
                     .onChange(of: store.automation) { _, _ in store.saveAll() }
-                    .onChange(of: store.appStoreConnect) { _, _ in store.saveAll() }
+                    .onChange(of: store.appStoreConnect) { _, _ in
+                        // 凭据改了，之前的校验结论作废。
+                        store.invalidateCredentialVerification()
+                        store.saveAll()
+                    }
 
                     InfoGrid(items: [
                         ("Suggested Bundle ID", BundleIdentifierGenerator.suggestedIdentifier(
@@ -2033,27 +2463,24 @@ struct AutomationView: View {
                 }
 
                 OptionSection(title: "App Store Connect API") {
+                    HStack(spacing: 9) {
+                        Text(L10n.string("API Keys"))
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                    }
+                    // Issuer ID / Key ID 不再是自由输入框：它们属于某一把密钥，
+                    // 由向导写入，手改只会让文件名与内容对不上。
+                    ASCKeyListSection()
                     Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 12) {
-                        GridRow {
-                            Field("Issuer ID", text: $store.appStoreConnect.issuerID)
-                            Field("Key ID", text: $store.appStoreConnect.keyID)
-                        }
                         GridRow {
                             Field("Bundle Prefix", text: $store.appStoreConnect.bundleIdentifierPrefix)
                             Toggle(L10n.string("Register connected device"), isOn: $store.appStoreConnect.registerConnectedDevice)
                         }
                     }
-                    .onChange(of: store.appStoreConnect) { _, _ in store.saveAll() }
-                    HStack {
-                        Text(store.appStoreConnect.privateKeyPath.isEmpty ? L10n.string("No API private key") : store.appStoreConnect.privateKeyPath)
-                            .lineLimit(1)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button {
-                            store.pickAppStoreConnectKey()
-                        } label: {
-                            Label(L10n.string("Choose .p8"), systemImage: "key")
-                        }
+                    .onChange(of: store.appStoreConnect) { _, _ in
+                        // 凭据改了，之前的校验结论作废。
+                        store.invalidateCredentialVerification()
+                        store.saveAll()
                     }
                     Text(L10n.string("The API key is used to create Bundle IDs, register the connected device, and download development provisioning profiles."))
                         .font(.caption)
@@ -2414,7 +2841,55 @@ final class FeatherStorage: @unchecked Sendable {
 
     func prepare() throws {
         for directory in [root, importsDirectory, signedDirectory, certificatesDirectory, downloadsDirectory] {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            // createDirectory 的 attributes 只作用于新建的目录，已存在的旧目录（早期版本建的 0755）
+            // 必须显式收紧，否则同机其他用户可以读到 certificates.json 里的 p12 密码。
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        }
+        hardenExistingFiles()
+    }
+
+    /// 把历史遗留的 0644 配置文件与 0755 证书目录收紧（一次性迁移，幂等）。
+    private func hardenExistingFiles() {
+        for file in [sourcesFile, libraryFile, certificatesFile, optionsFile, appStoreConnectFile, automationFile] {
+            guard FileManager.default.fileExists(atPath: file.path) else { continue }
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        }
+        // 存 .p8 的目录，旧版本的导入路径建的是 0755。
+        let ascKeyDirectory = root.appendingPathComponent("AppStoreConnect", isDirectory: true)
+        if FileManager.default.fileExists(atPath: ascKeyDirectory.path) {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: ascKeyDirectory.path)
+            let keys = (try? FileManager.default.contentsOfDirectory(at: ascKeyDirectory, includingPropertiesForKeys: nil)) ?? []
+            for key in keys {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: key.path)
+            }
+        }
+        // 每张证书一个子目录，旧版本建的是 0755。
+        harden(directory: certificatesDirectory)
+    }
+
+    /// 递归收紧：目录 0700、文件 0600。
+    ///
+    /// 目录必须保留执行位——0600 的目录连自己都进不去，证书目录下的 `AutoProfiles`
+    /// 被这么设过一次，结果描述文件写不进去，报的还是含糊的 "You don't have permission"。
+    private func harden(directory: URL) {
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        )) ?? []
+        for item in contents {
+            let isDirectory = (try? item.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: isDirectory ? 0o700 : 0o600],
+                ofItemAtPath: item.path
+            )
+            if isDirectory {
+                harden(directory: item)
+            }
         }
     }
 
@@ -2463,6 +2938,8 @@ final class FeatherStorage: @unchecked Sendable {
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(value)
         try data.write(to: url, options: .atomic)
+        // 原子写入会用临时文件替换目标，权限随之重置，所以每次写完都要重新收紧。
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 }
 
@@ -2857,6 +3334,10 @@ final class IPAService: @unchecked Sendable {
             try fileManager.removeItemIfExists(at: appURL.appendingPathComponent(relativePath))
         }
         try fileManager.removeItemIfExists(at: appURL.appendingPathComponent("Watch", isDirectory: true))
+        // App Store 下发的 Watch 占位目录（com.apple.WatchPlaceholder）只有 stub
+        // （CFBundleExecutable 指向并不存在的 "Executable" 文件），Zsign 无法对其签名，
+        // 会使整个签名流程报错，随 Watch 目录一并剥离。
+        try fileManager.removeItemIfExists(at: appURL.appendingPathComponent("com.apple.WatchPlaceholder", isDirectory: true))
         try removeEmbeddedProvisioningProfiles(in: appURL)
     }
 
@@ -3118,13 +3599,93 @@ struct P12Metadata {
     var serialNumber: String?
 }
 
+struct GeneratedCSR {
+    var privateKeyPEM: String
+    var csrPEM: String
+}
+
 enum CertificateService {
+    /// 本机生成 RSA 2048 私钥与 CSR。私钥全程不出本机，只有 CSR（含公钥）会上传给苹果。
+    static func createCSR(commonName: String) throws -> GeneratedCSR {
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FeatherMac-CSR-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: temp) }
+
+        let keyURL = temp.appendingPathComponent("key.pem")
+        let csrURL = temp.appendingPathComponent("csr.pem")
+        // subject 里的 / 和 = 会破坏 -subj 语法；苹果签发时也会重写 subject，这里只需一个合法 CN。
+        let safeCN = commonName
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: "=", with: "-")
+            .trimmed
+            .nonEmpty ?? "FeatherMac"
+        _ = try ProcessRunner.capture("/usr/bin/openssl", [
+            "req", "-new",
+            "-newkey", "rsa:2048",
+            "-nodes",
+            "-keyout", keyURL.path,
+            "-out", csrURL.path,
+            "-subj", "/CN=\(safeCN)"
+        ])
+        return GeneratedCSR(
+            privateKeyPEM: try String(contentsOf: keyURL, encoding: .utf8),
+            csrPEM: try String(contentsOf: csrURL, encoding: .utf8)
+        )
+    }
+
+    /// 把苹果签发回来的 DER 证书与本地私钥打包成 p12，返回临时文件（调用方负责删除）。
+    ///
+    /// 必须显式指定 AES-256-CBC：macOS 自带的是 LibreSSL，`pkcs12 -export` 默认用
+    /// pbeWithSHA1And40BitRC2-CBC，而 Zsign 链接的 OpenSSL 3 默认不加载 legacy provider，
+    /// 会以 "unsupported algorithm RC2-40-CBC" 直接拒读——那样签名会全线失败。
+    static func packageP12(privateKeyPEM: String, certificateDER: Data, password: String) throws -> URL {
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FeatherMac-P12-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+
+        let keyURL = temp.appendingPathComponent("key.pem")
+        let derURL = temp.appendingPathComponent("cert.der")
+        let pemURL = temp.appendingPathComponent("cert.pem")
+        let p12URL = temp.appendingPathComponent("cert.p12")
+        try privateKeyPEM.write(to: keyURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyURL.path)
+        try certificateDER.write(to: derURL)
+
+        _ = try ProcessRunner.capture("/usr/bin/openssl", ["x509", "-inform", "DER", "-in", derURL.path, "-out", pemURL.path])
+        _ = try ProcessRunner.capture("/usr/bin/openssl", [
+            "pkcs12", "-export",
+            "-inkey", keyURL.path,
+            "-in", pemURL.path,
+            "-out", p12URL.path,
+            "-keypbe", "AES-256-CBC",
+            "-certpbe", "AES-256-CBC",
+            "-macalg", "sha256",
+            "-passout", "pass:\(password)"
+        ])
+        // 私钥与中间产物用完即删，只留 p12 供调用方导入。
+        try? FileManager.default.removeItem(at: keyURL)
+        try? FileManager.default.removeItem(at: derURL)
+        try? FileManager.default.removeItem(at: pemURL)
+        return p12URL
+    }
+
+    /// 自动生成的 p12 密码：4 组 4 位，避开易混淆字符，便于用户抄写。
+    static func generatePassword() -> String {
+        let alphabet = Array("abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+        let groups = (0..<4).map { _ in
+            String((0..<4).map { _ in alphabet[Int.random(in: 0..<alphabet.count)] })
+        }
+        return groups.joined(separator: "-")
+    }
+
     static func importCertificate(p12: URL, password: String, storage: FeatherStorage) throws -> CertificateRecord {
         let id = UUID()
         let destination = storage.certificatesDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let p12Target = destination.appendingPathComponent("cert.p12")
         try FileManager.default.copyItem(at: p12, to: p12Target)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: p12Target.path)
 
         let metadata = try p12Metadata(p12: p12Target, password: password)
         let nickname = metadata.commonName ?? metadata.organization ?? p12.deletingPathExtension().lastPathComponent
@@ -3319,17 +3880,138 @@ struct CreatedProvisioningProfile {
     var data: Data
 }
 
+/// v1 只支持开发签名需要的两类。Distribution 涉及发布，风险高，不提供入口。
+enum DeveloperCertificateType: String, CaseIterable, Identifiable, Codable {
+    case iosDevelopment = "IOS_DEVELOPMENT"
+    case development = "DEVELOPMENT"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .iosDevelopment: "iOS Development"
+        case .development: "Apple Development"
+        }
+    }
+
+    static var apiFilterValue: String {
+        allCases.map(\.rawValue).joined(separator: ",")
+    }
+}
+
+/// 账号下一张开发证书在门户中的样子。
+struct PortalCertificate: Identifiable, Hashable {
+    var id: String
+    var name: String
+    var type: String
+    var serialNumber: String?
+    var expiration: Date?
+
+    var isExpired: Bool {
+        guard let expiration else { return false }
+        return expiration < Date()
+    }
+}
+
+struct CreatedCertificate {
+    var portal: PortalCertificate
+    var der: Data
+}
+
+struct ASCAccountSummary {
+    var certificateCount: Int
+    /// 苹果的团队 ID（bundleIds 的 seedId），用来让用户确认连对了账号。
+    var teamIdentifier: String?
+}
+
 final class AppleDeveloperService: @unchecked Sendable {
     private let baseURL = URL(string: "https://api.appstoreconnect.apple.com/v1")!
 
-    func createDevelopmentProfile(appName: String, bundleIdentifier: String, certificate: CertificateRecord, settings: AppStoreConnectSettings) async throws -> CreatedProvisioningProfile {
+    /// 功能 A 第 4 步：用填好的三项发一次最小请求，验证 JWT 是否被苹果接受。
+    func validateCredentials(settings: AppStoreConnectSettings) async throws -> ASCAccountSummary {
         try validate(settings)
         let client = try AppStoreConnectClient(settings: settings, baseURL: baseURL)
-        let bundleID = try await ensureBundleID(identifier: bundleIdentifier, name: appName, client: client)
+        let certificates = try await client.list(
+            path: "certificates",
+            filters: ["certificateType": DeveloperCertificateType.apiFilterValue],
+            limit: 200
+        )
+        // 不从证书名里猜团队名：API 建的证书叫 "iOS Development: Created via API"，
+        // 按冒号切出来的是 "Created via API"，是段没有意义的字符串。
+        // bundleIds 的 seedId 才是真正的团队 ID。取不到就不显示，不编。
+        let teamIdentifier = try? await client
+            .list(path: "bundleIds", filters: [:], limit: 1)
+            .first?
+            .seedID
+        return ASCAccountSummary(
+            certificateCount: certificates.count,
+            teamIdentifier: teamIdentifier ?? nil
+        )
+    }
+
+    func listCertificates(settings: AppStoreConnectSettings) async throws -> [PortalCertificate] {
+        try validate(settings)
+        let client = try AppStoreConnectClient(settings: settings, baseURL: baseURL)
+        let resources = try await client.list(
+            path: "certificates",
+            filters: ["certificateType": DeveloperCertificateType.apiFilterValue],
+            limit: 200
+        )
+        return resources.map(Self.portalCertificate(from:))
+    }
+
+    /// 提交 CSR 换一张开发证书。409（数量达上限）原样抛出，由调用方走吊销重建流程。
+    func createCertificate(type: DeveloperCertificateType, csrPEM: String, settings: AppStoreConnectSettings) async throws -> CreatedCertificate {
+        try validate(settings)
+        let client = try AppStoreConnectClient(settings: settings, baseURL: baseURL)
+        let body: [String: Any] = [
+            "data": [
+                "type": "certificates",
+                "attributes": [
+                    "certificateType": type.rawValue,
+                    "csrContent": csrPEM
+                ]
+            ]
+        ]
+        let resource = try await client.create(path: "certificates", body: body)
+        guard let content = resource.certificateContent,
+              let der = Data(base64Encoded: content, options: [.ignoreUnknownCharacters]) else {
+            throw FeatherError.message("Apple did not return certificate content.")
+        }
+        return CreatedCertificate(portal: Self.portalCertificate(from: resource), der: der)
+    }
+
+    func revokeCertificate(id: String, settings: AppStoreConnectSettings) async throws {
+        try validate(settings)
+        let client = try AppStoreConnectClient(settings: settings, baseURL: baseURL)
+        try await client.delete(path: "certificates", id: id)
+    }
+
+    private static func portalCertificate(from resource: ASCResource) -> PortalCertificate {
+        PortalCertificate(
+            id: resource.id,
+            name: resource.name ?? resource.displayName ?? "Certificate",
+            type: resource.certificateType ?? "",
+            serialNumber: resource.serialNumber?.uppercased(),
+            expiration: resource.expirationDate
+        )
+    }
+
+    func createDevelopmentProfile(appName: String, bundleIdentifier: String, certificate: CertificateRecord, settings: AppStoreConnectSettings, progress: (@Sendable (String) -> Void)? = nil) async throws -> CreatedProvisioningProfile {
+        try validate(settings)
+        let client = try AppStoreConnectClient(settings: settings, baseURL: baseURL)
+        // Apple 的 bundleIds/profiles 接口只接受 ASCII 名称，中文应用名（如“微信”）会被
+        // HTTP 409 拒绝，这里统一转成 ASCII 安全名称。
+        let safeName = AppleDeveloperService.apiSafeName(for: appName, bundleIdentifier: bundleIdentifier)
+        let bundleID = try await ensureBundleID(identifier: bundleIdentifier, name: safeName, client: client)
         let device = try connectedDevice()
         let deviceResource = try await ensureDevice(device, settings: settings, client: client)
         let certificateResource = try await matchingCertificate(for: certificate, client: client)
-        let profileName = "\(appName) Development \(bundleIdentifier)"
+        let profileName = "\(safeName) Development \(bundleIdentifier)"
+        // 吊销证书会把绑它的描述文件变成 INVALID，但名字还占着，苹果会以
+        // "Multiple profiles found with the name ..." 409 拒绝新建。
+        // 这里先清掉同名的旧文件——名字是本应用按固定规则生成的，属于自己的命名空间。
+        try await removeProfiles(named: profileName, client: client, progress: progress)
         return try await createProfile(
             name: profileName,
             bundleID: bundleID.id,
@@ -3337,6 +4019,30 @@ final class AppleDeveloperService: @unchecked Sendable {
             deviceID: deviceResource.id,
             client: client
         )
+    }
+
+    private func removeProfiles(named name: String, client: AppStoreConnectClient, progress: (@Sendable (String) -> Void)?) async throws {
+        let existing = try await client.list(path: "profiles", filters: ["name": name], limit: 200)
+        for profile in existing where profile.name == name {
+            try await client.delete(path: "profiles", id: profile.id)
+            progress?("Removed stale provisioning profile \(name).")
+        }
+    }
+
+    static func apiSafeName(for appName: String, bundleIdentifier: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " ._-"))
+        let trimmedName = appName.trimmed
+        let transliterated = trimmedName.applyingTransform(StringTransform("Any-Latin; Latin-ASCII"), reverse: false) ?? trimmedName
+        let filtered = String(transliterated.unicodeScalars.filter { allowed.contains($0) })
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmed
+        if !filtered.isEmpty {
+            return filtered
+        }
+        if let component = bundleIdentifier.split(separator: ".").last, !component.isEmpty {
+            return String(component)
+        }
+        return "App"
     }
 
     private func validate(_ settings: AppStoreConnectSettings) throws {
@@ -3402,7 +4108,13 @@ final class AppleDeveloperService: @unchecked Sendable {
     }
 
     private func matchingCertificate(for certificate: CertificateRecord, client: AppStoreConnectClient) async throws -> ASCResource {
-        let certificates = try await client.list(path: "certificates", filters: ["certificateType": "IOS_DEVELOPMENT"], limit: 200)
+        // Xcode 生成的"Apple Development"证书类型是 DEVELOPMENT，只过滤 IOS_DEVELOPMENT 会误判
+        // "无匹配证书"（2026-07-18 故障排查实证）。API 支持逗号多值。
+        let certificates = try await client.list(
+            path: "certificates",
+            filters: ["certificateType": DeveloperCertificateType.apiFilterValue],
+            limit: 200
+        )
         let wantedSerial = certificate.p12SerialNumber?.uppercased()
         if let wantedSerial,
            let match = certificates.first(where: { $0.serialNumber?.uppercased() == wantedSerial }) {
@@ -3461,6 +4173,40 @@ struct ASCResource {
     var displayName: String? { attributes["displayName"] as? String }
     var serialNumber: String? { (attributes["serialNumber"] as? String)?.replacingOccurrences(of: ":", with: "") }
     var profileContent: String? { attributes["profileContent"] as? String }
+    var certificateType: String? { attributes["certificateType"] as? String }
+    var seedID: String? { attributes["seedId"] as? String }
+    var certificateContent: String? { attributes["certificateContent"] as? String }
+
+    /// ASC 返回的是 ISO8601 字符串（形如 2027-07-18T09:12:33.000+00:00）。
+    /// ISO8601DateFormatter 不是 Sendable，不能做静态缓存，按需构造。
+    var expirationDate: Date? {
+        guard let raw = attributes["expirationDate"] as? String else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
+    }
+}
+
+enum ASCAPIError: LocalizedError {
+    case http(status: Int, detail: String)
+
+    var status: Int {
+        switch self {
+        case .http(let status, _): status
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .http(_, let detail): detail
+        }
+    }
+
+    var errorDescription: String? {
+        switch self {
+        case .http(let status, let detail): "Apple API HTTP \(status): \(detail)"
+        }
+    }
 }
 
 final class AppStoreConnectClient: @unchecked Sendable {
@@ -3497,7 +4243,13 @@ final class AppStoreConnectClient: @unchecked Sendable {
         return resource
     }
 
-    private func request(url: URL, method: String, body: Data? = nil) async throws -> [String: Any] {
+    /// DELETE /v1/<path>/<id>。成功时苹果返回 204 无正文。
+    func delete(path: String, id: String) async throws {
+        let url = baseURL.appendingPathComponent(path).appendingPathComponent(id)
+        _ = try await request(url: url, method: "DELETE", allowEmptyResponse: true)
+    }
+
+    private func request(url: URL, method: String, body: Data? = nil, allowEmptyResponse: Bool = false) async throws -> [String: Any] {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("Bearer \(try Self.jwt(settings: settings))", forHTTPHeaderField: "Authorization")
@@ -3512,7 +4264,11 @@ final class AppStoreConnectClient: @unchecked Sendable {
         }
         if !(200...299).contains(http.statusCode) {
             let detail = Self.appleErrorMessage(from: data) ?? String(data: data, encoding: .utf8) ?? "HTTP \(http.statusCode)"
-            throw FeatherError.message("Apple API HTTP \(http.statusCode): \(detail)")
+            // 带状态码抛出，让调用方能区分 401（凭据错）/403（权限不足）/409（数量达上限）。
+            throw ASCAPIError.http(status: http.statusCode, detail: detail)
+        }
+        if allowEmptyResponse && data.isEmpty {
+            return [:]
         }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw FeatherError.message("Apple API returned invalid JSON.")
@@ -3654,6 +4410,23 @@ enum FilePicker {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = defaultName
         return panel.runModal() == .OK ? panel.url : nil
+    }
+}
+
+@MainActor
+enum Confirm {
+    /// 破坏性或外发操作的二次确认。默认按钮是"取消"，确认按钮需要用户主动选择。
+    static func warn(title: String, message: String, confirmTitle: String, destructive: Bool = false) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L10n.string(title)
+        alert.informativeText = L10n.string(message)
+        let confirmButton = alert.addButton(withTitle: L10n.string(confirmTitle))
+        alert.addButton(withTitle: L10n.string("Cancel"))
+        if destructive, #available(macOS 11.0, *) {
+            confirmButton.hasDestructiveAction = true
+        }
+        return alert.runModal() == .alertFirstButtonReturn
     }
 }
 

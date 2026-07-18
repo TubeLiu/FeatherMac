@@ -180,3 +180,108 @@
 "Removing load commands..." = "正在移除加载命令...";
 "Signing with Zsign..." = "正在使用 Zsign 签名...";
 "Archiving IPA..." = "正在打包 IPA...";
+
+/* ASC API 配置向导 */
+"Prerequisites" = "前提";
+"Generate Key" = "生成密钥";
+"Import .p8" = "导入 .p8";
+"Verify" = "校验";
+"Before you start, confirm two things" = "开始之前，确认两件事";
+"A paid Apple Developer Program account" = "付费的 Apple Developer Program 账号";
+"Free accounts (Personal Team) have no Integrations section on the Apple website and cannot use this feature." = "免费账号（Personal Team）在苹果后台没有“集成”入口，无法使用本功能。";
+"Your role is Account Holder or Admin" = "你的角色是 Account Holder 或 Admin";
+"Other roles cannot see the key generation button. Ask a team admin to do this step." = "其他角色看不到密钥生成按钮，需要请团队管理员操作。";
+"Your private key stays on this Mac. FeatherMac never uploads the .p8 file and never asks for your Apple ID password." = "你的私钥只保存在本机。FeatherMac 不会上传 .p8，也不需要你的 Apple ID 密码。";
+"Complete these three steps in your browser" = "在浏览器里完成这三步";
+"Click “Generate API Key”. Any name works. Set access to App Manager or higher." = "点“生成 API 密钥”，名称随意，访问权限选“App 管理”或更高。";
+"Download the AuthKey_XXXXXXXXXX.p8 file and save it somewhere it will not be cleaned up." = "下载 AuthKey_XXXXXXXXXX.p8，存到不会被清理的位置。";
+"Copy the Issuer ID from the top of the page. You will paste it in the next step." = "复制页面顶部的 Issuer ID，下一步要粘贴。";
+"You can only download the .p8 once. Apple will not let you download it again." = ".p8 只能下载一次，苹果不会让你再下载第二遍。";
+"Open App Store Connect" = "打开 App Store Connect";
+"Key file" = "密钥文件";
+"No file selected" = "未选择文件";
+"Choose…" = "选择…";
+"Detected from the file name" = "已从文件名自动识别";
+"Copy it from the top of the web page" = "从网页顶部复制";
+"File format is valid: a PEM-encoded EC P-256 private key." = "文件格式正确：PEM 封装的 EC P-256 私钥。";
+"This file is not a PEM-encoded EC P-256 private key. Make sure you picked the AuthKey_*.p8 downloaded from App Store Connect." = "这不是 PEM 封装的 EC P-256 私钥。请确认选的是从 App Store Connect 下载的 AuthKey_*.p8。";
+"Ready to verify your credentials with Apple." = "准备向苹果校验凭据。";
+"Verifying with Apple…" = "正在向苹果校验…";
+"Connected to team %@. Your account is ready to create certificates." = "已连接到团队 %@，账号可以创建证书了。";
+"Connected. Your account is ready to create certificates." = "已连接，账号可以创建证书了。";
+"Next" = "下一步";
+"Back" = "上一步";
+"I downloaded the .p8" = "我已下载 .p8";
+"Verify and Save" = "校验并保存";
+"Retry" = "重试";
+"Done" = "完成";
+"Setup Wizard…" = "配置向导…";
+
+/* 凭据状态 */
+"Not configured" = "未配置";
+"Not verified" = "待校验";
+"Ready" = "可用";
+"Invalid" = "失效";
+"App Store Connect API is not configured" = "尚未配置 App Store Connect API";
+"App Store Connect credentials are not working" = "App Store Connect 凭据不可用";
+"Configure it to create certificates and provisioning profiles inside FeatherMac." = "配置后才能在应用内申请证书、创建描述文件。";
+"Set Up…" = "开始配置…";
+"Reconfigure…" = "重新配置…";
+"Credentials rejected (401). The Issuer ID, Key ID, and .p8 file do not match. Check them, or generate a new key on the Apple website." = "凭据被拒绝（401）。Issuer ID、Key ID 与 .p8 三者不匹配。请回上一步核对，或在网页上重新生成一份密钥。";
+"Insufficient permissions (403). This key's role cannot access certificates. Generate a new key as Account Holder or Admin with App Manager access or higher." = "权限不足（403）。该密钥的角色无权访问证书。请用 Account Holder 或 Admin 账号重新生成，访问权限选“App 管理”或更高。";
+"Verifying App Store Connect credentials..." = "正在校验 App Store Connect 凭据...";
+
+/* 创建证书 */
+"Create Certificate" = "创建证书";
+"Certificate type" = "证书类型";
+"Generated automatically" = "自动生成";
+"Generate" = "自动生成";
+"Configure the API first" = "需先配置 API";
+"Creating certificate..." = "正在创建证书...";
+"Certificate creation cancelled." = "已取消创建证书。";
+"Copy" = "拷贝";
+"Set as Default" = "设为默认证书";
+"%@ · serial %@ · valid until %@" = "%1$@ · 序列号 %2$@ · 有效期至 %3$@";
+"Use this password to export the certificate or open it in other tools. FeatherMac remembers it, but this is the only time it is shown in full." = "此密码用于导出该证书或在其他工具中使用。FeatherMac 会记住它，但这里是唯一一次以明文展示。";
+
+/* 证书详情与门户状态 */
+"Serial" = "序列号";
+"Account status" = "门户状态";
+"Matches your account" = "与账号一致";
+"No longer in your account" = "门户中已不存在";
+"This certificate expired on %@. Signing will fail. Create a replacement development certificate." = "证书已于 %@ 过期，签名会失败。可申请一张新的开发证书替换。";
+"Renew Now" = "一键续期";
+"Revoke in Portal…" = "在门户中吊销…";
+"Revoke this certificate?" = "确定吊销这张证书？";
+"Revoking only affects future signing: apps already installed on your device keep working, but signing again with this certificate will fail." = "吊销只影响再次签名：已经装在设备上的 App 不受影响，但用该证书重新签名会失败。";
+"Revoke" = "吊销";
+"Revoking certificate..." = "正在吊销证书...";
+"This certificate no longer exists in your account." = "该证书在你的账号中已不存在。";
+
+/* 409 吊销重建 */
+"Your account has reached Apple's development certificate limit" = "账号下的开发证书已达苹果上限";
+"To continue, revoke one first. Revoking only affects future signing: apps already installed on your device keep working. Only development certificates are listed here." = "要继续创建，需要先吊销一张。吊销只影响再次签名：已经装在设备上的 App 不受影响。此处仅列出开发证书。";
+"Revoke and Create" = "吊销并创建";
+"expired" = "已过期";
+
+/* 私钥外发警告 */
+"This file contains your API private key" = "该文件包含你的 API 私钥";
+"The exported file embeds your App Store Connect .p8 private key in plain text. Anyone who obtains it can create and revoke certificates on your account. Store it somewhere safe and do not share it." = "导出的文件以明文内嵌你的 App Store Connect .p8 私钥。拿到它的人可以在你的账号下创建和吊销证书。请妥善保存，不要外传。";
+"Export Anyway" = "仍然导出";
+"Upload your API private key to iCloud Drive?" = "把 API 私钥上传到 iCloud Drive？";
+"Your App Store Connect .p8 private key will be written to iCloud Drive in plain text and synced to every device signed in to your Apple ID. Only continue if you trust that account." = "你的 App Store Connect .p8 私钥将以明文写入 iCloud Drive，并同步到所有登录该 Apple ID 的设备。确认信任该账号再继续。";
+"Upload to iCloud" = "上传到 iCloud";
+
+/* .p8 密钥管理 */
+"API Keys" = "API 密钥";
+"No API key added yet" = "尚未添加 API 密钥";
+"Add Key…" = "添加密钥…";
+"Reveal in Finder" = "在访达中显示";
+"Remove from FeatherMac…" = "从 FeatherMac 移除…";
+"Remove this API key from FeatherMac?" = "从 FeatherMac 移除这把 API 密钥？";
+"This deletes the key file stored by FeatherMac. It does NOT revoke the key on Apple's website — it will keep working anywhere else it is used. To disable it for good, revoke it in App Store Connect." = "这会删除 FeatherMac 保存的密钥文件，但不会在苹果后台吊销它——这把密钥在别处照样能用。要彻底作废，请到 App Store Connect 里吊销。";
+"Remove" = "移除";
+"Key files are stored by FeatherMac with owner-only permissions." = "密钥文件由 FeatherMac 保存，仅本人可读。";
+"Team %@" = "团队 %@";
+"Issuer %@" = "Issuer %@";
+"key file missing" = "密钥文件已丢失";
