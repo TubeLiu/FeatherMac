@@ -1,125 +1,93 @@
-# FeatherMac 1.1.0
-
-Certificates and App Store Connect credentials can now be set up entirely inside the app.
-
-## English
-
-### App Store Connect API setup wizard
-
-- Four-step guided setup: prerequisite check, opening the Apple portal, importing the `.p8`, and online verification.
-- Key ID is detected automatically from the `AuthKey_*.p8` file name; the file is validated locally before anything is sent to Apple.
-- Verification reports exactly what went wrong — rejected credentials (401) and insufficient permissions (403) each get their own explanation and next step.
-- Free (Personal Team) accounts are identified up front rather than failing at the last step.
-
-### Create signing certificates without Xcode
-
-- Create an iOS Development or Apple Development certificate directly from the Certificates page. The private key is generated locally and never leaves your Mac.
-- p12 passwords can be generated automatically, and are shown once on completion.
-- When the account has reached Apple's certificate limit, FeatherMac lists your development certificates and offers to revoke one and retry. Already-installed apps are unaffected; only future signing is.
-- Expired certificates show a warning and a one-click renewal that reuses the same certificate type.
-- Certificate details now show the serial number and whether the certificate still exists in your Apple account.
-
-### API key management
-
-- Multiple API keys can be stored and switched between, for people working across accounts or teams.
-- Key files are copied into FeatherMac's data directory with owner-only permissions, so cleaning your Downloads folder no longer breaks signing.
-- Unreferenced key files are removed automatically at launch.
-- Removing a key states plainly that it does **not** revoke the key on Apple's side.
-
-### Credential storage
-
-- Data directories are now `0700` and stored files `0600`, applied to existing installations on first launch.
-- Exporting or syncing your configuration to iCloud Drive now warns that the file contains your API private key in plain text.
-
-### Other changes
-
-- APT repositories are now parsed alongside AltStore sources.
-- Provisioning profile selection moved to the Signing page, where it is used.
-- Refreshed the default source list.
-
-### Fixes
-
-- Certificates issued by Xcode ("Apple Development") are no longer reported as missing when creating a provisioning profile.
-- Conflicting same-name provisioning profiles are removed automatically instead of failing with an Apple API error.
-
-### Upgrading
-
-Existing App Store Connect settings migrate automatically to the new multi-key format on first launch. No manual steps.
-
-### Known limitations
-
-- p12 passwords are still stored in FeatherMac's local configuration; the interface says so rather than implying otherwise. Keychain storage is planned and requires a signed build first.
-- Certificate creation requires a paid Apple Developer Program account. Free accounts cannot use the App Store Connect API.
-
-## 中文
-
-### App Store Connect API 配置向导
-
-- 四步引导：前提检查、打开苹果后台、导入 `.p8`、在线校验。
-- Key ID 自动从 `AuthKey_*.p8` 文件名识别；文件在本地先校验格式，不合格不会发给苹果。
-- 校验失败会说清是哪儿错了——凭据被拒（401）和权限不足（403）各有各的说明和下一步。
-- 免费账号（Personal Team）在第一步就会被指出，不会走到最后才失败。
-
-### 不用 Xcode 也能申请签名证书
-
-- 在证书页直接申请 iOS Development 或 Apple Development 证书。私钥在本机生成，全程不出本机。
-- p12 密码可自动生成，创建完成时展示一次。
-- 账号证书名额已满时，FeatherMac 会列出你的开发证书，让你确认吊销一张后重试。已安装的 App 不受影响，只影响再次签名。
-- 已过期证书会给出警告和一键续期，续期沿用原证书类型。
-- 证书详情新增序列号，以及该证书在苹果账号中是否仍然存在。
-
-### API 密钥管理
-
-- 可保存多把密钥并切换，适合跨账号或跨团队使用。
-- 密钥文件复制进 FeatherMac 数据目录并设为仅本人可读，清理"下载"文件夹不会再让签名失效。
-- 启动时自动清理无人引用的密钥文件。
-- 移除密钥时明确说明：这**不等于**在苹果后台吊销它。
-
-### 凭据存储
-
-- 数据目录改为 `0700`、文件改为 `0600`，已有安装在首次启动时自动收紧。
-- 导出配置或同步到 iCloud Drive 前会提示：文件以明文内嵌你的 API 私钥。
-
-### 其他改动
-
-- 除 AltStore 源外，现在也支持解析 APT 仓库。
-- 描述文件选择移到"签名"页——用它的地方。
-- 更新了默认源列表。
-
-### 修复
-
-- 使用 Xcode 签发的 "Apple Development" 证书创建描述文件时，不再被误报为找不到匹配证书。
-- 同名描述文件冲突时自动清理，不再直接抛出苹果 API 错误。
-
-### 升级说明
-
-已有的 App Store Connect 配置会在首次启动时自动迁移为新的多密钥格式，无需手动操作。
-
-### 已知限制
-
-- p12 密码目前仍存放在 FeatherMac 的本地配置中，界面对此如实说明，没有暗示更强的保护。钥匙串存储已列入计划，前置是先有正式签名的构建。
-- 申请证书需要付费的 Apple Developer Program 账号，免费账号无法使用 App Store Connect API。
-
----
-
 # FeatherMac 1.0.0
 
-Initial public release.
+Sign iOS apps and install them on your own device — from one native Mac app, without opening Xcode.
 
 ## English
 
-- Native macOS IPA library, source browser, certificate manager, signer, installer, and automation workflow.
-- Chinese and English UI.
-- App Store Connect API support for Bundle ID creation, connected-device registration, and development provisioning profile generation.
-- CI-style automation page: select imported IPA, create or reuse profile, optionally replace icon, sign, install, and keep the signed result available for reinstall.
-- iCloud Drive sync and import/export for App Store Connect configuration.
-- Includes safe git ignore rules for signing keys, certificates, profiles, imported IPAs, signed IPAs, and local config.
+### What this is
+
+If you have a paid Apple Developer account and you sideload apps onto your own iPhone, you know the routine: open Xcode to make a certificate, go to the developer portal for a bundle ID, register the device, download a provisioning profile, find a signing tool, then find another tool to install the result. Six places, and none of them talk to each other.
+
+FeatherMac does the whole chain in one window. Import an IPA, and it creates the certificate, registers your device, generates the provisioning profile, signs, and installs — while showing you what it is doing at each step.
+
+**This is for people who already pay for the Apple Developer Program.** Certificates come from Apple's App Store Connect API, which free (Personal Team) accounts cannot use. If you are looking for 7-day signing with a free Apple ID, this is not that tool.
+
+### Why it exists
+
+On 15 July 2026 a signing certificate expired and every part of a working setup stopped at once. Renewing it meant Xcode, the portal, re-exporting a `.p12`, re-importing it, regenerating profiles — an afternoon of clicking through five interfaces to recover from something entirely predictable.
+
+FeatherMac was built so that never costs an afternoon again. Certificates are created, renewed, and revoked inside the app. It warns you before one expires, and tells you whether the certificate on your Mac still matches what Apple has on file — so the failure gets caught while it is still a warning, not after signing breaks.
+
+### What you get
+
+**Certificates without Xcode.** Create an iOS Development certificate from inside the app. The private key is generated on your Mac and never leaves it — only the certificate request is uploaded. When Apple's certificate limit is reached, FeatherMac lists what you have and offers to revoke one and continue. Expired certificates get a one-click renewal.
+
+**A setup wizard that catches mistakes early.** Connecting your Apple account takes four steps. The Key ID is read from the `AuthKey_*.p8` file name, the file is checked before anything is sent to Apple, and when Apple rejects your credentials you get told which of the three values is wrong rather than a raw error code.
+
+**One click from IPA to installed app.** The Automation page runs the full sequence: pick an app, create or reuse a provisioning profile, replace the icon, sign, install. Re-signing after a certificate renewal is the same one click — no setup to redo. There is a `--workflow` command-line mode for scripting it.
+
+**The signing options you actually reach for.** Rename the app, rewrite its bundle identifier, replace the icon, inject tweaks and dylibs, toggle Info.plist capabilities, strip URL schemes.
+
+**App sources.** Browse AltStore-style catalogs and APT repositories, download apps, and keep every signed result for reinstalling later.
+
+**Credentials handled properly.** p12 passwords go in your keychain, not a config file — a stolen `cert.p12` is useless without one. Data directories are owner-only. Exporting your configuration warns you first that the file contains your API private key in plain text.
+
+FeatherMac is signed with a Developer ID certificate and notarized by Apple, so it opens by double-clicking. Chinese and English throughout.
+
+### Requirements
+
+- macOS 14 or later
+- A paid Apple Developer Program account
+- `libimobiledevice` / `ideviceinstaller` to install to a device (`brew install libimobiledevice ideviceinstaller`)
+
+### Not included
+
+- Free Apple ID signing (the 7-day kind) — the App Store Connect API is not available to free accounts
+- Distribution certificates and App Store submission
+- Wireless install; the device connects over USB
 
 ## 中文
 
-- 首个公开版本，包含 macOS 原生 IPA 资料库、源管理、证书管理、签名、安装和自动化工作流。
-- 支持中文和英文界面。
-- 支持 App Store Connect API 自动创建 Bundle ID、注册连接设备、生成开发描述文件。
-- “自动配置”页面提供类似 CI/CD 的一键流程：选择已导入 IPA、创建或复用描述文件、可选替换图标、签名、安装，并保留签名产物用于重复安装。
-- 支持 App Store Connect 配置导入/导出和 iCloud Drive 同步。
-- 已加入安全忽略规则，避免提交私钥、证书、描述文件、导入 IPA、签名 IPA 和本地配置。
+在一个 Mac 原生应用里完成 iOS 应用签名与安装，不用打开 Xcode。
+
+### 这是什么
+
+如果你有付费的 Apple 开发者账号，又常给自己的 iPhone 侧载应用，大概熟悉这套流程：开 Xcode 建证书，去开发者后台建 Bundle ID，注册设备，下载描述文件，找个签名工具，再找个安装工具。六个地方，彼此不通气。
+
+FeatherMac 把整条链收进一个窗口。导入 IPA，它会创建证书、注册设备、生成描述文件、签名、安装——每一步都摆在你眼前。
+
+**这个软件是给已经付费加入 Apple Developer Program 的人用的。** 证书通过苹果的 App Store Connect API 申请，而免费账号（Personal Team）用不了这个接口。如果你想找的是用免费 Apple ID 做 7 天签名，这不是那类工具。
+
+### 为什么会有它
+
+2026 年 7 月 15 日，一张签名证书过期，一套本来跑得好好的流程当场全线瘫痪。续期意味着重开 Xcode、进后台、重新导出 `.p12`、再导入、重建描述文件——为了一件完全可预期的事，在五个界面之间点掉一个下午。
+
+FeatherMac 就是为了让这件事不再花掉一个下午。证书的申请、续期、吊销都在应用内完成。它会在证书过期前给出警告，并告诉你本机这张证书在苹果账号里是否还在——让问题在还是"警告"的时候被发现，而不是等签名断了才知道。
+
+### 它能给你什么
+
+**不用 Xcode 也能搞定证书。** 在应用里直接申请 iOS 开发证书，私钥在本机生成、全程不出本机，上传的只有证书请求。撞上苹果的证书数量上限时，它会列出你已有的证书，让你确认吊销一张后继续。证书过期则是一键续期。
+
+**能提前拦住错误的配置向导。** 连接苹果账号只需四步。Key ID 从 `AuthKey_*.p8` 文件名自动读出，文件在发给苹果之前先本地校验；苹果拒绝你的凭据时，它会告诉你三项里哪一项不对，而不是甩一个原始错误码。
+
+**从 IPA 到装进手机，一次点击。** "自动配置"页把整套流程跑完：选应用、创建或复用描述文件、替换图标、签名、安装。证书续期之后重签也还是这一次点击，不用重做任何配置。另有 `--workflow` 命令行模式便于脚本化。
+
+**真正会用到的签名选项。** 改应用名、改 Bundle ID、换图标、注入插件与 dylib、开关 Info.plist 能力、移除 URL Scheme。
+
+**软件源。** 浏览 AltStore 风格的源目录与 APT 仓库，下载应用，每次签名的产物都留着，随时可重装。
+
+**凭据存放得当。** p12 密码存进钥匙串而非配置文件——别人拿到 `cert.p12` 没有密码也打不开。数据目录仅本人可读。导出配置前会先提示：文件里以明文内嵌着你的 API 私钥。
+
+FeatherMac 已用 Developer ID 证书签名并通过苹果公证，下载后双击即可打开。全程中英双语。
+
+### 环境要求
+
+- macOS 14 或更高版本
+- 付费的 Apple Developer Program 账号
+- 安装到设备需要 `libimobiledevice` / `ideviceinstaller`（`brew install libimobiledevice ideviceinstaller`）
+
+### 不包含
+
+- 免费 Apple ID 签名（7 天那种）——App Store Connect API 不对免费账号开放
+- 发布（Distribution）证书与上架 App Store
+- 无线安装，设备需通过 USB 连接
