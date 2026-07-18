@@ -242,7 +242,7 @@
 "Copy" = "拷贝";
 "Set as Default" = "设为默认证书";
 "%@ · serial %@ · valid until %@" = "%1$@ · 序列号 %2$@ · 有效期至 %3$@";
-"Use this password to export the certificate or open it in other tools. FeatherMac remembers it, but this is the only time it is shown in full." = "此密码用于导出该证书或在其他工具中使用。FeatherMac 会记住它，但这里是唯一一次以明文展示。";
+"Use this password to export the certificate or open it in other tools. It has been saved to your keychain — look it up in Keychain Access under “FeatherMac” if you need it again." = "此密码用于导出该证书或在其他工具中使用。它已保存到你的钥匙串——需要时可在「钥匙串访问」里搜“FeatherMac”找回。";
 
 /* 证书详情与门户状态 */
 "Serial" = "序列号";
@@ -285,3 +285,7 @@
 "Team %@" = "团队 %@";
 "Issuer %@" = "Issuer %@";
 "key file missing" = "密钥文件已丢失";
+
+/* 钥匙串 */
+"Keychain %@ failed: %@" = "钥匙串%1$@操作失败：%2$@";
+"The p12 password for \u201c%@\u201d is not in your keychain. Import the .p12 again to restore it." = "证书“%@”的 p12 密码不在钥匙串里。重新导入该 .p12 即可恢复。";

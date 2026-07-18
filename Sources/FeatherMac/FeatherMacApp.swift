@@ -407,6 +407,7 @@ struct CertificateRecord: Identifiable, Codable, Hashable {
     var nickname: String
     var p12Path: String
     var provisionPath: String? = nil
+    /// 只在内存里；持久化时走钥匙串，不写进 certificates.json。见 `KeychainStore`。
     var password: String
     var expiration: Date?
     var teamName: String?
@@ -419,6 +420,60 @@ struct CertificateRecord: Identifiable, Codable, Hashable {
 
     var p12URL: URL { URL(fileURLWithPath: p12Path) }
     var provisionURL: URL? { provisionPath.map { URL(fileURLWithPath: $0) } }
+
+    /// 密码不参与编解码。`FeatherStorage` 负责在读写时与钥匙串同步。
+    private enum CodingKeys: String, CodingKey {
+        case id, nickname, p12Path, provisionPath, expiration, teamName
+        case teamIdentifier, appIdentifierPrefix, appIDName, p12SerialNumber
+        case importedAt, isDefault
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        nickname = try container.decode(String.self, forKey: .nickname)
+        p12Path = try container.decode(String.self, forKey: .p12Path)
+        provisionPath = try container.decodeIfPresent(String.self, forKey: .provisionPath)
+        password = ""
+        expiration = try container.decodeIfPresent(Date.self, forKey: .expiration)
+        teamName = try container.decodeIfPresent(String.self, forKey: .teamName)
+        teamIdentifier = try container.decodeIfPresent(String.self, forKey: .teamIdentifier)
+        appIdentifierPrefix = try container.decodeIfPresent(String.self, forKey: .appIdentifierPrefix)
+        appIDName = try container.decodeIfPresent(String.self, forKey: .appIDName)
+        p12SerialNumber = try container.decodeIfPresent(String.self, forKey: .p12SerialNumber)
+        importedAt = try container.decodeIfPresent(Date.self, forKey: .importedAt) ?? Date()
+        isDefault = try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+    }
+
+    init(
+        id: UUID = UUID(),
+        nickname: String,
+        p12Path: String,
+        provisionPath: String? = nil,
+        password: String,
+        expiration: Date? = nil,
+        teamName: String? = nil,
+        teamIdentifier: String? = nil,
+        appIdentifierPrefix: String? = nil,
+        appIDName: String? = nil,
+        p12SerialNumber: String? = nil,
+        importedAt: Date = Date(),
+        isDefault: Bool = false
+    ) {
+        self.id = id
+        self.nickname = nickname
+        self.p12Path = p12Path
+        self.provisionPath = provisionPath
+        self.password = password
+        self.expiration = expiration
+        self.teamName = teamName
+        self.teamIdentifier = teamIdentifier
+        self.appIdentifierPrefix = appIdentifierPrefix
+        self.appIDName = appIDName
+        self.p12SerialNumber = p12SerialNumber
+        self.importedAt = importedAt
+        self.isDefault = isDefault
+    }
 }
 
 /// 一把 App Store Connect API 密钥。私钥文件由应用托管（复制进数据目录，0600），
@@ -890,6 +945,8 @@ final class AppStore: ObservableObject {
 
     func deleteCertificate(_ cert: CertificateRecord) {
         try? FileManager.default.removeItem(at: cert.p12URL.deletingLastPathComponent())
+        // 一并清掉钥匙串条目，否则删过的证书会在钥匙串里留下无主密码越积越多。
+        KeychainStore.delete(for: cert.id)
         certificates.removeAll { $0.id == cert.id }
         selectedCertID = certificates.first?.id
         saveAll()
@@ -935,6 +992,14 @@ final class AppStore: ObservableObject {
     }
 
     private func validateSigningMaterials(app: LibraryApp, certificate: CertificateRecord, provisionURL: URL, options: SigningOptions) throws {
+        // 密码存在钥匙串里，可能读不到（换了机器、恢复了备份、条目被删）。
+        // 早点说清楚怎么恢复，别让它变成 openssl 的一句 "invalid password"。
+        if certificate.password.isEmpty {
+            throw FeatherError.message(L10n.format(
+                "The p12 password for “%@” is not in your keychain. Import the .p12 again to restore it.",
+                certificate.nickname
+            ))
+        }
         guard FileManager.default.fileExists(atPath: provisionURL.path) else {
             throw FeatherError.message(L10n.string("Provisioning profile file is missing."))
         }
@@ -2104,8 +2169,8 @@ struct CertificateDetailView: View {
     }
 }
 
-/// 创建成功后的一次性展示。文案如实说"应用会记住它"——密码确实还存在本地 JSON 里，
-/// 不能暗示别处再也拿不到（钥匙串存储另立项）。
+/// 创建成功后的一次性展示。密码存在钥匙串里，所以文案告诉用户去哪儿找回，
+/// 而不是让人以为错过这一眼就永远拿不到了。
 struct CreatedCertificateSheet: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
@@ -2138,7 +2203,7 @@ struct CreatedCertificateSheet: View {
                 }
                 .padding(10)
                 .background(.quinary, in: RoundedRectangle(cornerRadius: 8))
-                Text(L10n.string("Use this password to export the certificate or open it in other tools. FeatherMac remembers it, but this is the only time it is shown in full."))
+                Text(L10n.string("Use this password to export the certificate or open it in other tools. It has been saved to your keychain — look it up in Keychain Access under “FeatherMac” if you need it again."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2902,8 +2967,23 @@ final class FeatherStorage: @unchecked Sendable {
     func saveSources(_ value: [SourceRecord]) throws { try save(value, to: sourcesFile) }
     func loadLibrary() throws -> [LibraryApp] { try load([LibraryApp].self, from: libraryFile, default: []) }
     func saveLibrary(_ value: [LibraryApp]) throws { try save(value, to: libraryFile) }
-    func loadCertificates() throws -> [CertificateRecord] { try load([CertificateRecord].self, from: certificatesFile, default: []) }
-    func saveCertificates(_ value: [CertificateRecord]) throws { try save(value, to: certificatesFile) }
+    /// 读出记录后从钥匙串补回密码。取不到就留空，由签名前的检查给出可操作的报错，
+    /// 而不是拿空密码去调 openssl 报一句看不懂的话。
+    func loadCertificates() throws -> [CertificateRecord] {
+        var records = try load([CertificateRecord].self, from: certificatesFile, default: [])
+        for index in records.indices {
+            records[index].password = (try? KeychainStore.password(for: records[index].id)) ?? ""
+        }
+        return records
+    }
+
+    /// 密码写钥匙串，其余字段写 JSON。
+    func saveCertificates(_ value: [CertificateRecord]) throws {
+        for record in value where !record.password.isEmpty {
+            try KeychainStore.save(password: record.password, for: record.id)
+        }
+        try save(value, to: certificatesFile)
+    }
     func loadOptions() throws -> SigningOptions { try load(SigningOptions.self, from: optionsFile, default: SigningOptions()) }
     func saveOptions(_ value: SigningOptions) throws { try save(value, to: optionsFile) }
     func loadAppStoreConnectSettings() throws -> AppStoreConnectSettings { try load(AppStoreConnectSettings.self, from: appStoreConnectFile, default: AppStoreConnectSettings()) }
